@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multiverso</title>
+    <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css?v=62">
+</head>
+<body>
+    <header>
+        <div class="header-brand-group">
+            <h1 class="header-brand" id="header-brand-title" title="Ir para o início / Limpar filtros">Multiverso</h1>
+            <div class="header-search-wrap">
+                <svg class="search-icon" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="11" cy="11" r="8"></circle>
+                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                </svg>
+                <input type="text" id="filter-input" class="filter-input" placeholder="Buscar no catálogo...">
+                <button type="button" id="clear-search-btn" class="clear-search-btn" title="Limpar busca">&times;</button>
+            </div>
+        </div>
+        <div class="header-actions">
+            <div id="jsonbin-status-indicator"></div>
+            <button id="btn-open-roulette" class="btn secondary">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect>
+                    <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"></circle>
+                    <circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"></circle>
+                    <circle cx="15.5" cy="8.5" r="1.5" fill="currentColor"></circle>
+                    <circle cx="8.5" cy="15.5" r="1.5" fill="currentColor"></circle>
+                </svg>
+                <span>Roleta</span>
+            </button>
+            <button id="btn-open-search" class="btn primary">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19"></line>
+                    <line x1="5" y1="12" x2="19" y2="12"></line>
+                </svg>
+                <span>Adicionar Obra</span>
+            </button>
+            
+            <div style="position: relative;">
+                <button id="btn-hamburger" class="btn-hamburger" title="Mais opções" aria-label="Menu">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="12" x2="21" y2="12"></line>
+                        <line x1="3" y1="6" x2="21" y2="6"></line>
+                        <line x1="3" y1="18" x2="21" y2="18"></line>
+                    </svg>
+                </button>
+                <div id="hamburger-menu" class="hamburger-dropdown">
+                    <button id="btn-jsonbin-sync" class="hamburger-item" onclick="configureJsonBin()" title="Sincronizar dados automaticamente com a nuvem do JSONBin.io">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"></path></svg>
+                        <span>Configurar Nuvem (JSONBin)</span>
+                    </button>
+                    
+                    <label for="import-backup" class="hamburger-item" style="cursor:pointer;" title="Carregar um arquivo de backup">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                        <span>Importar Dados</span>
+                    </label>
+                    <input type="file" id="import-backup" accept=".json" style="display:none;">
+                    
+                    <button id="export-backup" class="hamburger-item" title="Salvar sua lista no computador">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                        <span>Exportar Dados</span>
+                    </button>
+
+                    <button id="btn-update-streamings" class="hamburger-item" title="Buscar novos streamings para todos os itens da biblioteca">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                        <span>Atualizar Streamings</span>
+                    </button>
+                    
+                    <hr class="menu-divider">
+                    
+                    <button id="clear-all-data" class="hamburger-item danger" title="Apagar todos os dados permanentemente">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        <span>Apagar Tudo</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="filters-bar">
+            <div class="filter-group">
+                <button class="filter-btn active" data-type="all">Todos</button>
+                <button class="filter-btn" data-type="Filme">Filmes</button>
+                <button class="filter-btn" data-type="Série">Séries</button>
+                <button class="filter-btn" data-type="Livro">Livros</button>
+            </div>
+            
+            <div class="filters-right-group">
+                <div class="sort-wrapper">
+                    <span class="sort-label">Ordenar:</span>
+                    <select id="sort-select" class="custom-select">
+                        <option value="recent">Mais Recentes</option>
+                        <option value="rating">Maior Nota</option>
+                        <option value="az">Ordem Alfabética</option>
+                        <option value="year">Ano de Lançamento</option>
+                    </select>
+                </div>
+                <button id="btn-open-drawer" class="btn-filter-trigger">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="4" y1="21" x2="4" y2="14"></line>
+                        <line x1="4" y1="10" x2="4" y2="3"></line>
+                        <line x1="12" y1="21" x2="12" y2="12"></line>
+                        <line x1="12" y1="8" x2="12" y2="3"></line>
+                        <line x1="20" y1="21" x2="20" y2="16"></line>
+                        <line x1="20" y1="12" x2="20" y2="3"></line>
+                        <line x1="1" y1="14" x2="7" y2="14"></line>
+                        <line x1="9" y1="8" x2="15" y2="8"></line>
+                        <line x1="17" y1="16" x2="23" y2="16"></line>
+                    </svg>
+                    <span>Filtros</span>
+                    <span id="filter-badge" class="filter-count-badge" style="display:none;">0</span>
+                </button>
+            </div>
+        </div>
+        <div id="movies-grid" class="movies-grid">
+            <!-- Filmes serão injetados aqui via JS -->
+        </div>
+    </main>
+
+    <!-- Modal de Busca -->
+    <div id="search-modal" class="modal">
+        <div class="modal-content search-modal-content">
+            <button class="close-btn" id="close-search" title="Fechar">&times;</button>
+            <h2 id="form-modal-title" class="modal-header-title">Adicionar Obra</h2>
+            
+            <div class="auto-fetch-box">
+                <p class="auto-fetch-title">🔍 Preenchimento Automático</p>
+                <div class="auto-fetch-fields">
+                    <div style="flex:2; min-width:200px; position:relative;">
+                        <label class="form-label">Título da Obra *</label>
+                        <input type="text" id="auto-title" placeholder="Ex: Oppenheimer, 1984, Ruptura..." class="form-input">
+                        <div id="auto-suggestions" class="suggestions-dropdown"></div>
+                    </div>
+                    <div style="flex:1; min-width:130px;">
+                        <label class="form-label">Tipo</label>
+                        <select id="auto-type" class="custom-select" style="width:100%;">
+                            <option value="multi">Tudo</option>
+                            <option value="movie">Filme</option>
+                            <option value="tv">Série</option>
+                            <option value="book">Livro</option>
+                        </select>
+                    </div>
+                    <button id="btn-auto-search" style="display:none;">Buscar</button>
+                </div>
+                <p style="font-size:12px; color:var(--text-faint); margin:10px 0 0 0;">O sistema procurará a capa oficial, sinopse, ano e diretor automaticamente na internet ao confirmar uma sugestão.</p>
+            </div>
+
+            <div class="form-layout-split">
+                <div class="form-poster-col">
+                    <label class="form-label">Capa</label>
+                    <div class="form-poster-preview-box">
+                        <img id="form-poster-preview" src="" alt="Prévia" style="display:none;">
+                        <span id="form-poster-placeholder" style="color:var(--text-faint); font-size:13px;">Sem capa</span>
+                    </div>
+                    <input type="text" id="form-poster-url" placeholder="URL da Capa" class="form-input" style="text-align:center;">
+                </div>
+                
+                <div class="form-fields-col">
+                    <div class="form-row">
+                        <div style="flex:1; min-width:130px;">
+                            <label class="form-label">Ano de Lançamento</label>
+                            <input type="text" id="form-year" placeholder="Ex: 2023" class="form-input">
+                        </div>
+                        <div style="flex:1; min-width:130px;">
+                            <label class="form-label">Direção/Autoria</label>
+                            <input type="text" id="form-director" placeholder="Ex: Christopher Nolan" class="form-input">
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="form-label">Gêneros</label>
+                        <input type="text" id="form-genres" placeholder="Ex: Ficção Científica, Drama" class="form-input">
+                    </div>
+
+                    <div>
+                        <label class="form-label">Sinopse</label>
+                        <textarea id="form-overview" placeholder="Resumo oficial da obra..." rows="3" class="form-input" style="resize:vertical;"></textarea>
+                    </div>
+                    
+                    <div>
+                        <label class="form-label">Suas Anotações (Opcional)</label>
+                        <textarea id="form-notes" placeholder="Onde você parou? O que achou até agora?" rows="2" class="form-input" style="resize:vertical;"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer">
+                <button id="btn-cancel-form" class="btn secondary">Cancelar</button>
+                <button id="btn-save-form" class="btn primary">Salvar no Catálogo</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Detalhes -->
+    <div id="details-modal" class="modal">
+        <div class="modal-content details-content">
+            <button class="close-btn" id="close-details" title="Fechar">&times;</button>
+            <div class="details-layout">
+                <img id="details-poster" src="" alt="Capa">
+                
+                <div class="details-info">
+                    <div class="details-badges">
+                        <span id="details-badge" class="badge"></span>
+                    </div>
+                    <h2><span id="details-title"></span> <span id="details-year" class="details-year"></span></h2>
+                    <div class="details-meta">
+                        <p id="details-original-title-wrap" class="details-meta-item">
+                            <span class="meta-label">Título Original:</span>
+                            <span id="details-original-title"></span>
+                        </p>
+                        <div class="details-meta-grid">
+                            <div class="details-meta-item">
+                                <span class="meta-label">Direção/Autoria:</span>
+                                <span id="details-director">Carregando...</span>
+                            </div>
+                            <div class="details-meta-item">
+                                <span class="meta-label">Gêneros:</span>
+                                <span id="details-genres">Carregando...</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="details-providers" class="details-providers-section" style="display: none;">
+                        <p class="details-providers-title">Disponível em:</p>
+                        <div id="details-providers-icons" class="details-providers-list"></div>
+                    </div>
+
+                    <div class="details-rating">
+                        <span class="rating-label">Sua Nota:</span>
+                        <div id="details-stars" class="details-rating-stars"></div>
+                        <span id="details-rating-text" class="details-rating-value">Sem nota</span>
+                    </div>
+
+                    <!-- Ações Rápidas: Status (Assistido) e Favorito (ambos botões com ícone) -->
+                    <div class="details-quick-actions">
+                        <button id="details-status-btn" class="details-icon-btn status-btn" type="button" title="Marcar como assistido" aria-label="Marcar como assistido">
+                            <svg class="action-icon status-eye-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </button>
+
+                        <button id="details-favorite-btn" class="details-icon-btn fav-btn" type="button" title="Favoritar" aria-label="Favoritar">
+                            <svg class="action-icon fav-heart-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Full width bottom sections -->
+            <div class="details-bottom">
+                <div class="details-overview-box">
+                    <h4>Resumo</h4>
+                    <p id="details-overview"></p>
+                </div>
+
+                <div id="details-notes-box" class="details-overview-box details-overview-box--highlight" style="display:none;">
+                    <h4>Minhas Anotações</h4>
+                    <p id="details-notes"></p>
+                </div>
+
+                <div class="details-user-actions">
+                    <div class="details-actions-row">
+                        <button id="details-edit-btn" class="btn secondary" style="flex:1;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                            <span>Editar Obra</span>
+                        </button>
+                        <button id="details-remove-btn" class="btn danger" style="flex:1;">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            <span>Remover da Lista</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal da Roleta -->
+    <div id="roulette-modal" class="modal">
+        <div class="modal-content roulette-modal-content" id="roulette-modal-content">
+            <button class="close-btn" id="close-roulette" title="Fechar">&times;</button>
+            
+            <!-- Topo: Botão de Filtros -->
+            <div class="roulette-header">
+                <div class="roulette-top-actions">
+                    <button type="button" id="btn-toggle-roulette-filters" class="btn-filter-trigger roulette-filter-toggle" title="Abrir/Fechar painel de filtros">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="4" y1="21" x2="4" y2="14"></line>
+                            <line x1="4" y1="10" x2="4" y2="3"></line>
+                            <line x1="12" y1="21" x2="12" y2="12"></line>
+                            <line x1="12" y1="8" x2="12" y2="3"></line>
+                            <line x1="20" y1="21" x2="20" y2="16"></line>
+                            <line x1="20" y1="12" x2="20" y2="3"></line>
+                            <line x1="1" y1="14" x2="7" y2="14"></line>
+                            <line x1="9" y1="8" x2="15" y2="8"></line>
+                            <line x1="17" y1="16" x2="23" y2="16"></line>
+                        </svg>
+                        <span>Filtros</span>
+                        <span id="roulette-filter-badge" class="filter-count-badge" style="display:none;">0</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Corpo: Layout Split (Filtros ao lado no desktop / empilhado no mobile) -->
+            <div id="roulette-body" class="roulette-body">
+                
+                <!-- Coluna Lateral de Filtros Avançados -->
+                <aside id="roulette-filter-panel" class="roulette-filter-panel">
+                    <div class="roulette-panel-header">
+                        <h4>Filtros</h4>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <button type="button" id="btn-sync-roulette-filters" class="roulette-link-btn" title="Copiar os filtros que estão aplicados na tela principal">⚡ Usar da Tela</button>
+                            <span style="color:var(--border); font-size:11px;">•</span>
+                            <button type="button" id="btn-clear-roulette-filters" class="roulette-link-btn" title="Resetar filtros da roleta">Limpar</button>
+                        </div>
+                    </div>
+
+                    <div class="roulette-panel-scroll">
+                        <!-- 1. Tipo de Obra -->
+                        <div class="roulette-filter-group">
+                            <label class="roulette-label">Tipo de Obra</label>
+                            <div class="roulette-pill-group" id="roulette-type-pills">
+                                <button type="button" class="roulette-pill active" data-type="multi">Todos</button>
+                                <button type="button" class="roulette-pill" data-type="Filme">Filmes</button>
+                                <button type="button" class="roulette-pill" data-type="Série">Séries</button>
+                                <button type="button" class="roulette-pill" data-type="Livro">Livros</button>
+                            </div>
+                            <!-- Select oculto para compatibilidade -->
+                            <select id="roulette-type" style="display:none;">
+                                <option value="multi" selected>Todos</option>
+                                <option value="Filme">Filme</option>
+                                <option value="Série">Série</option>
+                                <option value="Livro">Livro</option>
+                            </select>
+                        </div>
+
+                        <!-- 2. Status -->
+                        <div class="roulette-filter-group">
+                            <label class="roulette-label">Status</label>
+                            <div class="roulette-pill-group" id="roulette-status-pills">
+                                <button type="button" class="roulette-pill" data-status="all">Todos</button>
+                                <button type="button" class="roulette-pill active" data-status="unwatched">Não Assistidos</button>
+                                <button type="button" class="roulette-pill" data-status="watched">Assistidos</button>
+                            </div>
+                        </div>
+
+                        <!-- 3. Favoritos -->
+                        <div class="roulette-filter-group">
+                            <label class="roulette-label">Favoritos</label>
+                            <div class="roulette-pill-group">
+                                <button type="button" class="roulette-pill" id="btn-roulette-favorite-pill">Apenas Favoritos</button>
+                            </div>
+                            <input type="checkbox" id="chk-roulette-favorite" style="display:none;">
+                        </div>
+
+                        <!-- 3. Gêneros (Accordion) -->
+                        <div class="accordion-item roulette-accordion">
+                            <button type="button" class="accordion-header roulette-accordion-header">
+                                <span>Gêneros</span>
+                                <span class="accordion-icon">▼</span>
+                            </button>
+                            <div class="accordion-content roulette-accordion-content" id="roulette-genres-list">
+                                <!-- Preenchido dinamicamente -->
+                            </div>
+                        </div>
+
+                        <!-- 4. País de Origem (Accordion) -->
+                        <div class="accordion-item roulette-accordion">
+                            <button type="button" class="accordion-header roulette-accordion-header">
+                                <span>País de Origem</span>
+                                <span class="accordion-icon">▼</span>
+                            </button>
+                            <div class="accordion-content roulette-accordion-content" id="roulette-countries-list">
+                                <!-- Preenchido dinamicamente -->
+                            </div>
+                        </div>
+
+                        <!-- 5. Onde Assistir / Streaming (Accordion) -->
+                        <div class="accordion-item roulette-accordion">
+                            <button type="button" class="accordion-header roulette-accordion-header">
+                                <span>Onde Assistir</span>
+                                <span class="accordion-icon">▼</span>
+                            </button>
+                            <div class="accordion-content roulette-accordion-content" id="roulette-providers-list">
+                                <!-- Preenchido dinamicamente -->
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Botão Mobile para voltar à Roleta -->
+                    <div class="roulette-panel-mobile-footer">
+                        <button type="button" id="btn-close-roulette-panel" class="btn primary" style="width:100%;">
+                            Ver Roleta
+                        </button>
+                    </div>
+                </aside>
+
+                <!-- Coluna Principal (Roda do Sorteio & Resultados) -->
+                <div class="roulette-stage" id="roulette-stage">
+                    <div id="roulette-config"></div>
+
+                    <!-- Título do Sorteio (Centralizado logo acima do pool de obras) -->
+                    <h2 class="roulette-stage-title" id="roulette-stage-title">O que vamos assistir hoje?</h2>
+
+                    <!-- Barra de Status do Pool de Obras -->
+                    <div id="roulette-pool-bar" class="roulette-pool-bar">
+                        <span id="roulette-pool-count">Calculando obras...</span>
+                    </div>
+
+                    <!-- Container da Roda -->
+                    <div id="roulette-wheel-container" class="roulette-wheel-wrapper">
+                        <!-- Ponteiro -->
+                        <div class="roulette-pointer"></div>
+                        
+                        <!-- Roda de Sorteio -->
+                        <canvas id="roulette-wheel" width="400" height="400" class="roulette-wheel-canvas"></canvas>
+                        
+                        <button id="btn-spin-roulette" class="roulette-spin-btn" title="Girar a Roleta!">
+                            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="3" width="18" height="18" rx="3" ry="3"></rect>
+                                <circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"></circle>
+                                <circle cx="15.5" cy="15.5" r="1.5" fill="currentColor"></circle>
+                                <circle cx="15.5" cy="8.5" r="1.5" fill="currentColor"></circle>
+                                <circle cx="8.5" cy="15.5" r="1.5" fill="currentColor"></circle>
+                                <circle cx="12" cy="12" r="1.5" fill="currentColor"></circle>
+                            </svg>
+                        </button>
+                    </div>
+
+                    <!-- Container do Resultado -->
+                    <div id="roulette-result-container" class="roulette-result-wrapper" style="display:none;">
+                        <div id="roulette-result" class="roulette-result-card" style="animation: fadeIn 0.5s ease;">
+                            <span class="roulette-result-subtitle">Você vai assistir/ler:</span>
+                            <img id="roulette-result-poster" class="roulette-result-poster-img" src="" alt="Poster">
+                            <h2 id="roulette-result-title" class="roulette-result-heading"></h2>
+                            <p id="roulette-result-type" class="roulette-result-meta"></p>
+                            
+                            <div class="roulette-result-actions">
+                                <button id="btn-roulette-details" class="btn secondary">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                                    <span>Ver Detalhes</span>
+                                </button>
+                                <button id="btn-roulette-spin-again" class="btn primary">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                                    <span>Sortear de Novo</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- Backdrop & Drawer de Filtros -->
+    <div id="drawer-backdrop"></div>
+    <div id="filter-drawer">
+        <div class="drawer-header">
+            <div class="drawer-header-title">
+                <h3>Filtros</h3>
+                <span id="drawer-total-count">0 obras encontradas</span>
+            </div>
+            <button class="drawer-close-btn" id="btn-close-drawer" title="Fechar painel">&times;</button>
+        </div>
+
+        <div class="drawer-body">
+            <!-- Accordion: Tipo de Obra -->
+            <div class="accordion-item">
+                <button class="accordion-header">
+                    <span>Tipo de Obra</span>
+                    <span class="accordion-icon">▼</span>
+                </button>
+                <div class="accordion-content">
+                    <label class="filter-option">
+                        <span class="filter-option-label">
+                            <input type="checkbox" id="chk-type-filme"> Filmes
+                        </span>
+                        <span class="filter-option-count" id="count-type-filme">0</span>
+                    </label>
+                    <label class="filter-option">
+                        <span class="filter-option-label">
+                            <input type="checkbox" id="chk-type-serie"> Séries
+                        </span>
+                        <span class="filter-option-count" id="count-type-serie">0</span>
+                    </label>
+                    <label class="filter-option">
+                        <span class="filter-option-label">
+                            <input type="checkbox" id="chk-type-livro"> Livros
+                        </span>
+                        <span class="filter-option-count" id="count-type-livro">0</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Accordion: Status de Leitura / Assistido -->
+            <div class="accordion-item">
+                <button class="accordion-header">
+                    <span>Status &amp; Favoritos</span>
+                    <span class="accordion-icon">▼</span>
+                </button>
+                <div class="accordion-content">
+                    <label class="filter-option">
+                        <span class="filter-option-label">
+                            <input type="checkbox" id="chk-status-assistido"> Assistidos
+                        </span>
+                        <span class="filter-option-count" id="count-status-assistido">0</span>
+                    </label>
+                    <label class="filter-option">
+                        <span class="filter-option-label">
+                            <input type="checkbox" id="chk-status-nao-assistido"> Não Assistidos
+                        </span>
+                        <span class="filter-option-count" id="count-status-nao-assistido">0</span>
+                    </label>
+                    <label class="filter-option">
+                        <span class="filter-option-label">
+                            <input type="checkbox" id="chk-status-favorito"> Favoritos
+                        </span>
+                        <span class="filter-option-count" id="count-status-favorito">0</span>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Accordion: Gêneros -->
+            <div class="accordion-item">
+                <button class="accordion-header">
+                    <span>Gêneros</span>
+                    <span class="accordion-icon">▼</span>
+                </button>
+                <div class="accordion-content" id="drawer-genres-list">
+                    <!-- Gerado dinamicamente via JS -->
+                </div>
+            </div>
+
+            <!-- Accordion: País de Origem -->
+            <div class="accordion-item">
+                <button class="accordion-header">
+                    <span>País de Origem</span>
+                    <span class="accordion-icon">▼</span>
+                </button>
+                <div class="accordion-content" id="drawer-countries-list">
+                    <!-- Gerado dinamicamente via JS -->
+                </div>
+            </div>
+
+            <!-- Accordion: Onde Assistir (Streaming) -->
+            <div class="accordion-item">
+                <button class="accordion-header">
+                    <span>Onde Assistir</span>
+                    <span class="accordion-icon">▼</span>
+                </button>
+                <div class="accordion-content" id="drawer-providers-list">
+                    <!-- Gerado dinamicamente via JS -->
+                </div>
+            </div>
+        </div>
+
+        <div class="drawer-footer">
+            <button class="btn secondary" id="btn-clear-filters">Limpar Filtros</button>
+            <button class="btn primary" id="btn-apply-filters">Concluído</button>
+        </div>
+    </div>
+
+    <!-- Toast Notifications Container -->
+    <div id="toast-container"></div>
+
+    <script src="jsonbin-sync.js?v=57"></script>
+    <script src="drawer-filters.js?v=57"></script>
+    <script src="app.js?v=57"></script>
+</body>
+</html>

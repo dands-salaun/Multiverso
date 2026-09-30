@@ -1,0 +1,11 @@
+﻿const statusFilterSelect = document.getElementById('status-filter');
+const btnFavoritos = document.getElementById('btn-filter-favoritos');
+
+if (statusFilterSelect) {
+    statusFilterSelect.addEventListener('change', (e) => {
+        currentStatusFilter = e.target.value;
+        renderMovies(filterInput ? filterInput.value : '');
+    });
+}
+
+if (btnFavoritos) {
