@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🧪 Multiverso — Testes do Sistema de Merge</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Segoe UI', sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            padding: 32px;
+            min-height: 100vh;
+        }
+        h1 { font-size: 22px; margin-bottom: 8px; color: #58a6ff; }
+        .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 32px; }
+        .suite { margin-bottom: 28px; }
+        .suite-title {
+            font-size: 15px;
+            font-weight: 600;
+            color: #79c0ff;
+            border-bottom: 1px solid #21262d;
+            padding-bottom: 8px;
+            margin-bottom: 12px;
+        }
+        .test {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            margin-bottom: 6px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .test.pass { background: #0d2a1a; border-left: 3px solid #3fb950; }
+        .test.fail { background: #2d0f0f; border-left: 3px solid #f85149; }
+        .test.skip { background: #1c1c1c; border-left: 3px solid #6e7681; }
+        .badge { font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 20px; white-space: nowrap; flex-shrink: 0; margin-top: 1px; }
+        .badge.pass { background: #3fb950; color: #0d1117; }
+        .badge.fail { background: #f85149; color: #fff; }
+        .test-name { flex: 1; }
+        .detail { font-size: 11px; color: #8b949e; margin-top: 3px; font-family: monospace; }
+        .summary {
+            position: sticky;
+            top: 0;
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+            padding: 16px 20px;
+            margin-bottom: 32px;
+            display: flex;
+            gap: 32px;
+            align-items: center;
+        }
+        .stat { text-align: center; }
+        .stat-num { font-size: 28px; font-weight: 700; line-height: 1; }
+        .stat-label { font-size: 11px; color: #8b949e; margin-top: 4px; }
+        .pass-color { color: #3fb950; }
+        .fail-color { color: #f85149; }
+        .total-color { color: #58a6ff; }
+        .run-btn {
+            margin-left: auto;
+            background: #238636;
+            color: #fff;
+            border: none;
+            padding: 10px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .run-btn:hover { background: #2ea043; }
+        #results { margin-top: 0; }
+    </style>
+</head>
+<body>
+
+<h1>🧪 Multiverso — Testes do Sistema de Merge</h1>
+<p class="subtitle">Testes automatizados para merge por data de modificação, tombstones e deduplicação. Abre o console para detalhes extras.</p>
+
+<div class="summary">
+    <div class="stat"><div class="stat-num total-color" id="stat-total">—</div><div class="stat-label">Total</div></div>
+    <div class="stat"><div class="stat-num pass-color" id="stat-pass">—</div><div class="stat-label">Passou</div></div>
+    <div class="stat"><div class="stat-num fail-color" id="stat-fail">—</div><div class="stat-label">Falhou</div></div>
+    <button class="run-btn" onclick="runAllTests()">▶ Executar Testes</button>
+</div>
+
+<div id="results"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+// MOCK: localStorage isolado (não afeta dados reais da app)
+// ═══════════════════════════════════════════════════════════════
+const _store = {};
+const mockLocalStorage = {
+    getItem: k => _store[k] ?? null,
+    setItem: (k, v) => { _store[k] = v; },
+    removeItem: k => { delete _store[k]; },
+    clear: () => { Object.keys(_store).forEach(k => delete _store[k]); }
+};
+// Override global para os scripts de teste
+const localStorage = mockLocalStorage;
+
+// ═══════════════════════════════════════════════════════════════
+// COLAR AQUI: funções copiadas dos arquivos reais para teste
+// ═══════════════════════════════════════════════════════════════
+
+// -- De app.js --
+window.getDeletedTombstones = function() {
+    try { return JSON.parse(localStorage.getItem('deletedMovies')) || []; } catch(e) { return []; }
+};
+window.addTombstone = function(id) {
+    const tombstones = window.getDeletedTombstones();
+    if (!tombstones.find(t => String(t.id) === String(id))) {
+        tombstones.push({ id: String(id), deletedAt: Date.now() });
+        localStorage.setItem('deletedMovies', JSON.stringify(tombstones));
+    }
+};
+window.mergeTombstones = function(local, remote) {
+    const map = new Map();
+    [...(local || []), ...(remote || [])].forEach(t => {
+        const existing = map.get(String(t.id));
+        if (!existing || t.deletedAt > existing.deletedAt) map.set(String(t.id), t);
+    });
+    return Array.from(map.values());
+};
+
+// -- De jsonbin-sync.js --
+function areMovieListsEqual(listA, listB) {
+    if (!Array.isArray(listA) || !Array.isArray(listB)) return false;
+    if (listA.length !== listB.length) return false;
+    if (listA.length === 0 && listB.length === 0) return true;
+    const getFingerprint = (list) => list.map(m => String(m.id||m.title||'')+'|'+String(m.status||'')+'|'+String(m.favorite||'')+'|'+String(m.rating||'')+'|'+String(m.updatedAt||'')).sort().join(';;');
+    return getFingerprint(listA) === getFingerprint(listB);
+}
+
+function mergeNotes(ln, rn, lTs, rTs) {
+    ln = (ln || '').trim(); rn = (rn || '').trim();
+    if (!ln && !rn) return '';
+    if (!ln) return rn;
+    if (!rn) return ln;
+    if (ln === rn) return ln;
+    return lTs >= rTs ? ln : rn;
+}
+
+function mergeProviders(lp, rp) {
+    if (!lp && !rp) return undefined;
+    const all = [...(lp || []), ...(rp || [])];
+    const seen = new Set();
+    return all.filter(p => { const k = (p.name||'').split(' ')[0].toLowerCase(); if (seen.has(k)) return false; seen.add(k); return true; });
+}
+
+function mergeMovieFields(local, remote, tombstoneDeletedAt) {
+    const localTs  = local.updatedAt  || local.addedAt  || 0;
+    const remoteTs = remote.updatedAt || remote.addedAt || 0;
+    if (tombstoneDeletedAt && tombstoneDeletedAt > localTs && tombstoneDeletedAt > remoteTs) return null;
+    const winner = localTs >= remoteTs ? local : remote;
+    const loser  = localTs >= remoteTs ? remote : local;
+    return {
+        ...winner,
+        notes: mergeNotes(local.notes, remote.notes, localTs, remoteTs),
+        status: winner.status, rating: winner.rating, favorite: winner.favorite,
+        addedAt: Math.min(local.addedAt || Date.now(), remote.addedAt || Date.now()),
+        updatedAt: Math.max(localTs, remoteTs),
+        providers: mergeProviders(local.providers, remote.providers),
+    };
+}
+
+function mergeMovieLists(localList, remoteList) {
+    const localTombstones  = (typeof window.getDeletedTombstones === 'function') ? window.getDeletedTombstones() : [];
+    const remoteTombstones = remoteList._tombstones || [];
+    const mergedTombstones = (typeof window.mergeTombstones === 'function') ? window.mergeTombstones(localTombstones, remoteTombstones) : localTombstones;
+    localStorage.setItem('deletedMovies', JSON.stringify(mergedTombstones));
+    const tombstoneMap = new Map();
+    mergedTombstones.forEach(t => tombstoneMap.set(String(t.id), t.deletedAt));
+    const localMap = new Map(); (localList || []).forEach(m => localMap.set(String(m.id), m));
+    const remoteMap = new Map(); (remoteList || []).forEach(m => { if (m && !m._placeholder && !m._tombstones) remoteMap.set(String(m.id), m); });
+    const titleYearKey = m => `${String(m.title||'').toLowerCase().trim()}::${String(m.year||'')}`;
+    const localByTitleYear = new Map(); localMap.forEach(m => localByTitleYear.set(titleYearKey(m), m));
+    const result = new Map();
+    localMap.forEach((localMovie, id) => {
+        const tombstone = tombstoneMap.get(id);
+        const remoteMovie = remoteMap.get(id);
+        if (remoteMovie) {
+            result.set(id, mergeMovieFields(localMovie, remoteMovie, tombstone));
+        } else {
+            if (tombstone) {
+                const localUpdatedAt = localMovie.updatedAt || localMovie.addedAt || 0;
+                if (tombstone > localUpdatedAt) return;
+            }
+            result.set(id, localMovie);
+        }
+    });
+    remoteMap.forEach((remoteMovie, id) => {
+        if (result.has(id)) return;
+        const tombstone = tombstoneMap.get(id);
+        if (tombstone) {
+            const remoteUpdatedAt = remoteMovie.updatedAt || remoteMovie.addedAt || 0;
+            if (tombstone > remoteUpdatedAt) return;
+        }
+        const key = titleYearKey(remoteMovie);
+        if (localByTitleYear.has(key)) return;
+        result.set(id, remoteMovie);
+    });
+    return Array.from(result.values());
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FRAMEWORK DE TESTES MÍNIMO
+// ═══════════════════════════════════════════════════════════════
+let _results = [];
+let _currentSuite = '';
+
+function suite(name) { _currentSuite = name; }
+
+function test(name, fn) {
+    // Limpar tombstones entre testes
+    localStorage.clear();
+    try {
+        fn();
+        _results.push({ suite: _currentSuite, name, status: 'pass' });
+    } catch(e) {
+        _results.push({ suite: _currentSuite, name, status: 'fail', detail: e.message });
+        console.error(`[FAIL] ${_currentSuite} > ${name}`, e);
+    }
+}
+
+function expect(val) {
+    return {
+        toBe(expected) {
+            if (val !== expected) throw new Error(`Esperado: ${JSON.stringify(expected)}\nRecebido: ${JSON.stringify(val)}`);
+        },
+        toEqual(expected) {
+            const a = JSON.stringify(val), b = JSON.stringify(expected);
+            if (a !== b) throw new Error(`Esperado: ${b}\nRecebido: ${a}`);
+        },
+        toBeTruthy() { if (!val) throw new Error(`Esperado truthy, recebido: ${JSON.stringify(val)}`); },
+        toBeFalsy() { if (val) throw new Error(`Esperado falsy, recebido: ${JSON.stringify(val)}`); },
+        toBeNull() { if (val !== null) throw new Error(`Esperado null, recebido: ${JSON.stringify(val)}`); },
+        toContain(item) {
+            if (!Array.isArray(val)) throw new Error('toContain requer array');
+            const found = val.some(v => JSON.stringify(v) === JSON.stringify(item));
+            if (!found) throw new Error(`Array não contém: ${JSON.stringify(item)}\nArray: ${JSON.stringify(val)}`);
+        },
+        toHaveLength(n) {
+            if (!val || val.length !== n) throw new Error(`Esperado length ${n}, recebido ${val?.length}`);
+        },
+        toBeGreaterThan(n) {
+            if (!(val > n)) throw new Error(`Esperado > ${n}, recebido ${val}`);
+        },
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════
+// FIXTURES (dados de teste reutilizáveis)
+// ═══════════════════════════════════════════════════════════════
+const T = {
+    now: Date.now(),
+    old: Date.now() - 100_000,  // 100 segundos atrás
+    ancient: Date.now() - 500_000,
+};
+
+const makeMovie = (overrides = {}) => ({
+    id: '1',
+    title: 'Breaking Bad',
+    year: '2008',
+    type: 'Série',
+    status: 'quero-assistir',
+    rating: 0,
+    favorite: false,
+    notes: '',
+    addedAt: T.old,
+    updatedAt: T.old,
+    providers: undefined,
+    ...overrides,
+});
+
+// ═══════════════════════════════════════════════════════════════
+// TESTES
+// ═══════════════════════════════════════════════════════════════
+
+function runAllTests() {
+    _results = [];
+
+    // ──────────────────────────────────────────────
+    suite('areMovieListsEqual');
+    // ──────────────────────────────────────────────
+
+    test('Listas vazias são iguais', () => {
+        expect(areMovieListsEqual([], [])).toBe(true);
+    });
+
+    test('Listas com mesmos dados são iguais', () => {
+        const a = [makeMovie({ updatedAt: T.old })];
+        const b = [makeMovie({ updatedAt: T.old })];
+        expect(areMovieListsEqual(a, b)).toBe(true);
+    });
+
+    test('Detecta diferença de status', () => {
+        const a = [makeMovie({ status: 'assistido' })];
+        const b = [makeMovie({ status: 'quero-assistir' })];
+        expect(areMovieListsEqual(a, b)).toBe(false);
+    });
+
+    test('Detecta diferença de updatedAt', () => {
+        const a = [makeMovie({ updatedAt: T.old })];
+        const b = [makeMovie({ updatedAt: T.now })];
+        expect(areMovieListsEqual(a, b)).toBe(false);
+    });
+
+    test('Detecta quantidade diferente de obras', () => {
+        const a = [makeMovie(), makeMovie({ id: '2', title: 'Fargo' })];
+        const b = [makeMovie()];
+        expect(areMovieListsEqual(a, b)).toBe(false);
+    });
+
+    // ──────────────────────────────────────────────
+    suite('mergeMovieFields — Winner Takes All');
+    // ──────────────────────────────────────────────
+
+    test('Versão local mais recente vence', () => {
+        const local  = makeMovie({ status: 'assistido',     updatedAt: T.now });
+        const remote = makeMovie({ status: 'quero-assistir', updatedAt: T.old });
+        const result = mergeMovieFields(local, remote);
+        expect(result.status).toBe('assistido');
+    });
+
+    test('Versão remota mais recente vence', () => {
+        const local  = makeMovie({ status: 'quero-assistir', updatedAt: T.old });
+        const remote = makeMovie({ status: 'assistido',      updatedAt: T.now });
+        const result = mergeMovieFields(local, remote);
+        expect(result.status).toBe('assistido');
+    });
+
+    test('Rating da versão mais recente prevalece', () => {
+        const local  = makeMovie({ rating: 5, updatedAt: T.now });
+        const remote = makeMovie({ rating: 2, updatedAt: T.old });
+        const result = mergeMovieFields(local, remote);
+        expect(result.rating).toBe(5);
+    });
+
+    test('Favorite da versão mais recente prevalece', () => {
+        const local  = makeMovie({ favorite: true,  updatedAt: T.old });
+        const remote = makeMovie({ favorite: false, updatedAt: T.now });
+        const result = mergeMovieFields(local, remote);
+        expect(result.favorite).toBe(false);
+    });
+
+    test('updatedAt resultante é o maior dos dois', () => {
+        const local  = makeMovie({ updatedAt: T.old });
+        const remote = makeMovie({ updatedAt: T.now });
+        const result = mergeMovieFields(local, remote);
+        expect(result.updatedAt).toBe(T.now);
+    });
+
+    test('addedAt resultante é o menor dos dois (data de criação original)', () => {
+        const local  = makeMovie({ addedAt: T.old    });
+        const remote = makeMovie({ addedAt: T.ancient });
+        const result = mergeMovieFields(local, remote);
+        expect(result.addedAt).toBe(T.ancient);
+    });
+
+    // ──────────────────────────────────────────────
+    suite('mergeMovieFields — Notas');
+    // ──────────────────────────────────────────────
+
+    test('Usa nota do lado mais recente quando diferentes', () => {
+        const local  = makeMovie({ notes: 'Nota local',  updatedAt: T.now });
+        const remote = makeMovie({ notes: 'Nota remota', updatedAt: T.old });
+        const result = mergeMovieFields(local, remote);
+        expect(result.notes).toBe('Nota local');
+    });
+
+    test('Usa nota remota quando remota é mais recente', () => {
+        const local  = makeMovie({ notes: 'Nota local',  updatedAt: T.old });
+        const remote = makeMovie({ notes: 'Nota remota', updatedAt: T.now });
+        const result = mergeMovieFields(local, remote);
+        expect(result.notes).toBe('Nota remota');
+    });
+
+    test('Notas iguais retornam sem duplicar', () => {
+        const local  = makeMovie({ notes: 'Mesma nota' });
+        const remote = makeMovie({ notes: 'Mesma nota' });
+        expect(mergeNotes('Mesma nota', 'Mesma nota', T.old, T.old)).toBe('Mesma nota');
+    });
+
+    test('Nota vazia em um lado usa a do outro', () => {
+        expect(mergeNotes('', 'Nota remota', T.old, T.old)).toBe('Nota remota');
+        expect(mergeNotes('Nota local', '', T.old, T.old)).toBe('Nota local');
+    });
+
+    // ──────────────────────────────────────────────
+    suite('mergeMovieFields — Providers (Streaming)');
+    // ──────────────────────────────────────────────
+
+    test('Union de providers de ambos os lados', () => {
+        const local  = makeMovie({ providers: [{ name: 'Netflix' }] });
+        const remote = makeMovie({ providers: [{ name: 'Prime Video' }] });
+        const result = mergeMovieFields(local, remote);
+        expect(result.providers).toHaveLength(2);
+    });
+
+    test('Providers duplicados não se repetem', () => {
+        const local  = makeMovie({ providers: [{ name: 'Netflix' }] });
+        const remote = makeMovie({ providers: [{ name: 'Netflix' }] });
+        const result = mergeMovieFields(local, remote);
+        expect(result.providers).toHaveLength(1);
+    });
+
+    test('Sem providers em ambos os lados retorna undefined', () => {
+        const result = mergeMovieFields(makeMovie(), makeMovie());
+        expect(result.providers).toBe(undefined);
+    });
+
+    // ──────────────────────────────────────────────
+    suite('mergeMovieLists — Cenários Básicos');
+    // ──────────────────────────────────────────────
+
+    test('Obra só no local é preservada', () => {
+        const local  = [makeMovie({ id: '1' })];
+        const remote = [];
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(1);
+        expect(result[0].id).toBe('1');
+    });
+
+    test('Obra só no remoto é adicionada ao local', () => {
+        const local  = [];
+        const remote = [makeMovie({ id: '99' })];
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(1);
+        expect(result[0].id).toBe('99');
+    });
+
+    test('Duas obras distintas são unidas', () => {
+        const local  = [makeMovie({ id: '1', title: 'Breaking Bad' })];
+        const remote = [makeMovie({ id: '2', title: 'Fargo' })];
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(2);
+    });
+
+    test('Obra em ambos os lados usa a mais recente', () => {
+        const local  = [makeMovie({ id: '1', status: 'assistido',     updatedAt: T.now })];
+        const remote = [makeMovie({ id: '1', status: 'quero-assistir', updatedAt: T.old })];
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(1);
+        expect(result[0].status).toBe('assistido');
+    });
+
+    // ──────────────────────────────────────────────
+    suite('mergeMovieLists — Tombstones (Deleção)');
+    // ──────────────────────────────────────────────
+
+    test('Obra deletada localmente não volta da nuvem', () => {
+        // Simular deleção: adicionar tombstone com timestamp atual
+        localStorage.setItem('deletedMovies', JSON.stringify([
+            { id: '1', deletedAt: T.now }
+        ]));
+        const local  = []; // obra já foi deletada do local
+        const remote = [makeMovie({ id: '1', updatedAt: T.old })]; // nuvem ainda tem
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(0);
+    });
+
+    test('Obra remota mais recente que tombstone é restaurada', () => {
+        // O tombstone é mais antigo que a versão remota → a versão remota vence
+        localStorage.setItem('deletedMovies', JSON.stringify([
+            { id: '1', deletedAt: T.old }
+        ]));
+        const local  = [];
+        const remote = [makeMovie({ id: '1', updatedAt: T.now })];
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(1);
+    });
+
+    test('Tombstones dos dois lados são mesclados (union)', () => {
+        localStorage.setItem('deletedMovies', JSON.stringify([
+            { id: '10', deletedAt: T.old }
+        ]));
+        const local  = [];
+        const remote = [makeMovie({ id: '99' })];
+        remote._tombstones = [{ id: '20', deletedAt: T.old }];
+        mergeMovieLists(local, remote);
+        const merged = JSON.parse(localStorage.getItem('deletedMovies'));
+        const ids = merged.map(t => t.id);
+        expect(ids.includes('10')).toBe(true);
+        expect(ids.includes('20')).toBe(true);
+    });
+
+    test('Obra editada localmente após ser deletada em outro dispositivo prevalece', () => {
+        // Tombstone antigo, mas obra foi editada depois no local → local vence
+        const deletedAt = T.old;
+        const editedAt  = T.now; // edição mais recente que a deleção
+        localStorage.setItem('deletedMovies', JSON.stringify([
+            { id: '1', deletedAt }
+        ]));
+        const local  = [makeMovie({ id: '1', updatedAt: editedAt })];
+        const remote = [];
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(1);
+    });
+
+    // ──────────────────────────────────────────────
+    suite('mergeMovieLists — Deduplicação de Obras Manuais');
+    // ──────────────────────────────────────────────
+
+    test('Obra com mesmo título+ano mas IDs diferentes não duplica', () => {
+        // Mesmo título e ano, IDs diferentes (adicionada manualmente nos dois dispositivos)
+        const local  = [makeMovie({ id: 'local-001', title: 'Duna', year: '2021' })];
+        const remote = [makeMovie({ id: 'remote-999', title: 'Duna', year: '2021' })];
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(1);
+    });
+
+    test('Obras com títulos diferentes mas mesmo ano NÃO se confundem', () => {
+        const local  = [makeMovie({ id: '1', title: 'Duna',       year: '2021' })];
+        const remote = [makeMovie({ id: '2', title: 'Eternos',    year: '2021' })];
+        const result = mergeMovieLists(local, remote);
+        expect(result).toHaveLength(2);
+    });
+
+    // ──────────────────────────────────────────────
+    suite('Tombstones — addTombstone e getDeletedTombstones');
+    // ──────────────────────────────────────────────
+
+    test('addTombstone registra obra deletada', () => {
+        window.addTombstone('42');
+        const tombstones = window.getDeletedTombstones();
+        expect(tombstones).toHaveLength(1);
+        expect(tombstones[0].id).toBe('42');
+    });
+
+    test('addTombstone não duplica o mesmo ID', () => {
+        window.addTombstone('42');
+        window.addTombstone('42');
+        const tombstones = window.getDeletedTombstones();
+        expect(tombstones).toHaveLength(1);
+    });
+
+    test('addTombstone registra deletedAt como timestamp', () => {
+        const before = Date.now();
+        window.addTombstone('99');
+        const after = Date.now();
+        const t = window.getDeletedTombstones()[0];
+        expect(t.deletedAt >= before).toBe(true);
+        expect(t.deletedAt <= after).toBe(true);
+    });
+
+    test('mergeTombstones mantém o deletedAt mais recente para o mesmo ID', () => {
+        const local  = [{ id: '1', deletedAt: T.old }];
+        const remote = [{ id: '1', deletedAt: T.now }];
+        const result = window.mergeTombstones(local, remote);
+        expect(result).toHaveLength(1);
+        expect(result[0].deletedAt).toBe(T.now);
+    });
+
+    test('mergeTombstones faz union de IDs distintos', () => {
+        const local  = [{ id: '1', deletedAt: T.old }];
+        const remote = [{ id: '2', deletedAt: T.now }];
+        const result = window.mergeTombstones(local, remote);
+        expect(result).toHaveLength(2);
+    });
+
+    // ──────────────────────────────────────────────
+    suite('Migração — Obras sem updatedAt');
+    // ──────────────────────────────────────────────
+
+    test('mergeMovieFields funciona com obras sem updatedAt (usa addedAt)', () => {
+        const local  = { id: '1', title: 'Old Movie', status: 'assistido',     addedAt: T.now }; // sem updatedAt
+        const remote = { id: '1', title: 'Old Movie', status: 'quero-assistir', addedAt: T.old };
+        const result = mergeMovieFields(local, remote);
+        // local.addedAt > remote.addedAt, local vence
+        expect(result.status).toBe('assistido');
+    });
+
+    test('mergeMovieFields funciona com updatedAt=0 (fallback migração)', () => {
+        const local  = makeMovie({ status: 'assistido',     updatedAt: 0, addedAt: T.old });
+        const remote = makeMovie({ status: 'quero-assistir', updatedAt: T.now });
+        const result = mergeMovieFields(local, remote);
+        // remote.updatedAt > local.updatedAt → remote vence
+        expect(result.status).toBe('quero-assistir');
+    });
+
+    // Renderizar resultados
+    render();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// RENDER
+// ═══════════════════════════════════════════════════════════════
+function render() {
+    const pass = _results.filter(r => r.status === 'pass').length;
+    const fail = _results.filter(r => r.status === 'fail').length;
+    document.getElementById('stat-total').textContent = _results.length;
+    document.getElementById('stat-pass').textContent  = pass;
+    document.getElementById('stat-fail').textContent  = fail;
+
+    const container = document.getElementById('results');
+    container.innerHTML = '';
+
+    const suites = [...new Set(_results.map(r => r.suite))];
+    suites.forEach(suiteName => {
+        const suiteTests = _results.filter(r => r.suite === suiteName);
+        const div = document.createElement('div');
+        div.className = 'suite';
+        div.innerHTML = `<div class="suite-title">📦 ${suiteName} <span style="color:#6e7681;font-weight:400;font-size:12px">(${suiteTests.filter(t=>t.status==='pass').length}/${suiteTests.length})</span></div>`;
+        suiteTests.forEach(t => {
+            const row = document.createElement('div');
+            row.className = `test ${t.status}`;
+            row.innerHTML = `
+                <span class="badge ${t.status}">${t.status === 'pass' ? '✓ OK' : '✗ FALHOU'}</span>
+                <div class="test-name">
+                    ${t.name}
+                    ${t.detail ? `<div class="detail">${t.detail.replace(/\n/g,'<br>')}</div>` : ''}
+                </div>`;
+            div.appendChild(row);
+        });
+        container.appendChild(div);
+    });
+}
+
+// Auto-executar ao carregar
+window.addEventListener('load', runAllTests);
+</script>
+</body>
+</html>

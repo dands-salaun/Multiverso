@@ -32,6 +32,47 @@ if (cacheUpdated) {
     localStorage.setItem('myMovies', JSON.stringify(movies));
 }
 
+// Migração: adicionar updatedAt a obras que ainda não têm o campo
+let migrationUpdated = false;
+movies.forEach(m => {
+    if (!m.updatedAt) {
+        m.updatedAt = m.addedAt || Date.now();
+        migrationUpdated = true;
+    }
+});
+if (migrationUpdated) {
+    localStorage.setItem('myMovies', JSON.stringify(movies));
+}
+
+// Inicializar tombstones (lista de IDs de obras deletadas + timestamp de deleção)
+// Usado pelo sistema de merge para não restaurar obras intencionalmente removidas
+window.getDeletedTombstones = function() {
+    try {
+        return JSON.parse(localStorage.getItem('deletedMovies')) || [];
+    } catch(e) {
+        return [];
+    }
+};
+window.addTombstone = function(id) {
+    const tombstones = window.getDeletedTombstones();
+    // Evitar duplicatas
+    if (!tombstones.find(t => String(t.id) === String(id))) {
+        tombstones.push({ id: String(id), deletedAt: Date.now() });
+        localStorage.setItem('deletedMovies', JSON.stringify(tombstones));
+    }
+};
+window.mergeTombstones = function(local, remote) {
+    const map = new Map();
+    [...(local || []), ...(remote || [])].forEach(t => {
+        const existing = map.get(String(t.id));
+        // Mantém o tombstone com deletedAt mais recente
+        if (!existing || t.deletedAt > existing.deletedAt) {
+            map.set(String(t.id), t);
+        }
+    });
+    return Array.from(map.values());
+};
+
 // AVISO DE SEGURANÇA: A API Key do TMDB está exposta no frontend, o que é uma limitação
 // conhecida de aplicações puramente client-side. Considere usar um proxy server em produção.
 const apiKey = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
@@ -64,7 +105,8 @@ window.showToast = function(message, type = 'success') {
         : (type === 'error' 
             ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ff5544" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="15" y1="9" x2="9" y2="15"></line><line x1="9" y1="9" x2="15" y2="15"></line></svg>'
             : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#40bcf4" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>');
-    toast.innerHTML = `${icon}<span>${message}</span>`;
+    // Bug #9 fix: Sanitizar a mensagem antes de inserir via innerHTML para prevenir XSS
+    toast.innerHTML = `${icon}<span>${sanitizeHtml(message)}</span>`;
     container.appendChild(toast);
     setTimeout(() => {
         toast.style.opacity = '0';
@@ -169,7 +211,7 @@ function init() {
         });
     }
 
-    if (typeof updateProviderDropdown === 'function') updateProviderDropdown();
+    if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
     renderMovies();
 }
 
@@ -202,7 +244,7 @@ if (sortSelect) {
 }
 
 let currentProviderFilter = 'all';
-const providerFilterSelect = document.getElementById('provider-filter');
+// Nota: o seletor #provider-filter foi removido do HTML; a filtragem de streaming é feita pelo drawer.
 
 // Atualizar contadores dos filtros do topo (Todos, Filmes, Séries, Livros)
 // Bug #15 fix: Esta função agora é chamada dentro de renderMovies para manter os contadores atualizados.
@@ -423,6 +465,7 @@ window.toggleMovieStatus = function(id) {
     const movie = movies.find(m => String(m.id) === String(id));
     if (!movie) return;
     movie.status = (movie.status === 'assistido') ? 'quero-assistir' : 'assistido';
+    movie.updatedAt = Date.now();
     localStorage.setItem('myMovies', JSON.stringify(movies));
     renderMovies(filterInput ? filterInput.value : '');
     if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
@@ -432,10 +475,22 @@ window.toggleMovieFavorite = function(id) {
     const movie = movies.find(m => String(m.id) === String(id));
     if (!movie) return;
     movie.favorite = !movie.favorite;
+    movie.updatedAt = Date.now();
     localStorage.setItem('myMovies', JSON.stringify(movies));
     renderMovies(filterInput ? filterInput.value : '');
     if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
 };
+
+// Bug #2 fix: Debounce para evitar race condition quando múltiplos loadProviders
+// resolvem quase ao mesmo tempo e cada um sobrescreveria o localStorage com estado parcial.
+let _providerSaveTimer = null;
+function scheduleProvidersSave() {
+    clearTimeout(_providerSaveTimer);
+    _providerSaveTimer = setTimeout(() => {
+        localStorage.setItem('myMovies', JSON.stringify(movies));
+        if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
+    }, 250);
+}
 
 async function loadProviders(movie) {
     // Bug #5 fix: Livros não têm providers. Apenas retorna sem mutar o objeto
@@ -477,8 +532,8 @@ async function loadProviders(movie) {
             // Força a atualização se os provedores mudaram (para limpar o cache antigo)
             if (JSON.stringify(movie.providers) !== JSON.stringify(providers)) {
                 movie.providers = providers;
-                localStorage.setItem('myMovies', JSON.stringify(movies));
-                if (typeof updateProviderDropdown === 'function') updateProviderDropdown();
+                // Bug #2 fix: Usar debounce para evitar race condition entre fetches paralelos
+                scheduleProvidersSave();
             }
         } catch(e) {
             console.error('Erro ao buscar provedores', e);
@@ -502,7 +557,10 @@ async function loadProviders(movie) {
 // Remover filme da lista
 window.removeMovie = function(id) {
     if (confirm('Tem certeza que deseja remover este item da sua lista?')) {
-        movies = movies.filter(m => m.id !== id);
+        // Bug #1 fix: Usar coerção de String para suportar IDs numéricos (TMDB) e string (Google Books/OpenLibrary)
+        movies = movies.filter(m => String(m.id) !== String(id));
+        // Registrar tombstone para o sistema de merge não restaurar a obra da nuvem
+        if (typeof window.addTombstone === 'function') window.addTombstone(id);
         localStorage.setItem('myMovies', JSON.stringify(movies));
         renderMovies();
         // Bug #10 fix: Verificação de null antes de acessar .style
@@ -567,7 +625,7 @@ async function performAutoFetch() {
                     }
                 }
             } catch(e) {
-                console.log("Erro no Google Books API (PossÃ­vel limite de requisiÃ§Ãµes)", e);
+                console.log("Erro no Google Books API (Possível limite de requisições)", e);
             }
             
             // Fallback para OpenLibrary se Não achar nada ou der erro 429
@@ -598,7 +656,7 @@ async function performAutoFetch() {
         if (results.length > 0) {
             autoSuggestions.innerHTML = '';
             
-            // Se for multi, intercala os resultados ou sÃ³ pega os 5 primeiros
+            // Se for multi, intercala os resultados ou só pega os 5 primeiros
             results.slice(0, 5).forEach(item => {
                 const badge = item.type === 'tv' ? '\uD83D\uDCFA' : (item.type === 'book' ? '\uD83D\uDCDA' : '\uD83C\uDFAC');
                 
@@ -850,6 +908,7 @@ if (btnSaveForm) btnSaveForm.onclick = () => {
         notes: formNotes.value.trim(),
         favorite: existingMovie ? existingMovie.favorite : false,
         addedAt: existingMovie ? existingMovie.addedAt : Date.now(),
+        updatedAt: Date.now(),
         // Bug #9 fix: Preservar providers existentes ao editar para não perder dados de streaming
         providers: existingMovie ? existingMovie.providers : undefined
     };
@@ -934,6 +993,7 @@ window.showDetails = async function(id) {
         detailsStatusBtn.onclick = () => {
             const willBeWatched = (movie.status !== 'assistido');
             movie.status = willBeWatched ? 'assistido' : 'quero-assistir';
+            movie.updatedAt = Date.now();
             updateStatusUI(willBeWatched);
             localStorage.setItem('myMovies', JSON.stringify(movies));
             renderMovies(filterInput ? filterInput.value : '');
@@ -958,6 +1018,7 @@ window.showDetails = async function(id) {
     if (detailsFavoriteBtn) {
         detailsFavoriteBtn.onclick = () => {
             movie.favorite = !movie.favorite;
+            movie.updatedAt = Date.now();
             updateFavoriteUI(movie.favorite);
             localStorage.setItem('myMovies', JSON.stringify(movies));
             renderMovies(filterInput ? filterInput.value : '');
@@ -965,43 +1026,47 @@ window.showDetails = async function(id) {
         };
     }
 
-    detailsEditBtn.onclick = () => {
-        detailsModal.style.display = 'none';
-        document.getElementById('form-modal-title').innerText = '\u270F\uFE0F Editar Obra';
-        
-        currentFetchedId = movie.id;
-        formAutoTitle.value = movie.title || '';
-        formAutoType.value = movie.type === 'Série' ? 'tv' : (movie.type === 'Livro' ? 'book' : 'movie');
-        
-        if (movie.poster && !movie.poster.includes('via.placeholder.com')) {
-            formPosterUrl.value = movie.poster;
-            formPosterPreview.src = movie.poster;
-            formPosterPreview.style.display = 'block';
-            formPosterPlaceholder.style.display = 'none';
-        } else {
-            formPosterUrl.value = '';
-            formPosterPreview.style.display = 'none';
-            formPosterPlaceholder.style.display = 'block';
-        }
-        
-        formYear.value = movie.year || '';
-        formDirector.value = movie.director || '';
-        formGenres.value = movie.genres || '';
-        formOverview.value = movie.overview || '';
-        formNotes.value = movie.notes || '';
-        
-        autoSuggestions.style.display = 'none';
-        searchModal.style.display = 'block';
-    };
+    // Bug #3 fix: Null-checks em detailsEditBtn e elementos do formulário de edição
+    if (detailsEditBtn) {
+        detailsEditBtn.onclick = () => {
+            if (detailsModal) detailsModal.style.display = 'none';
+            const formModalTitle = document.getElementById('form-modal-title');
+            if (formModalTitle) formModalTitle.innerText = '\u270F\uFE0F Editar Obra';
+            
+            currentFetchedId = movie.id;
+            if (formAutoTitle) formAutoTitle.value = movie.title || '';
+            if (formAutoType) formAutoType.value = movie.type === 'Série' ? 'tv' : (movie.type === 'Livro' ? 'book' : 'movie');
+            
+            if (movie.poster && !movie.poster.includes('via.placeholder.com')) {
+                if (formPosterUrl) formPosterUrl.value = movie.poster;
+                if (formPosterPreview) { formPosterPreview.src = movie.poster; formPosterPreview.style.display = 'block'; }
+                if (formPosterPlaceholder) formPosterPlaceholder.style.display = 'none';
+            } else {
+                if (formPosterUrl) formPosterUrl.value = '';
+                if (formPosterPreview) formPosterPreview.style.display = 'none';
+                if (formPosterPlaceholder) formPosterPlaceholder.style.display = 'block';
+            }
+            
+            if (formYear) formYear.value = movie.year || '';
+            if (formDirector) formDirector.value = movie.director || '';
+            if (formGenres) formGenres.value = movie.genres || '';
+            if (formOverview) formOverview.value = movie.overview || '';
+            if (formNotes) formNotes.value = movie.notes || '';
+            
+            if (autoSuggestions) autoSuggestions.style.display = 'none';
+            if (searchModal) searchModal.style.display = 'block';
+        };
+    }
 
-    detailsRemoveBtn.onclick = () => removeMovie(id);
+    // Bug #3 fix: Null-check em detailsRemoveBtn
+    if (detailsRemoveBtn) detailsRemoveBtn.onclick = () => removeMovie(id);
 
     // Usa dados locais se existirem
     detailsYear.innerText = movie.year ? `(${movie.year})` : '';
     detailsDirector.innerText = movie.director || 'Desconhecido';
     detailsGenres.innerText = movie.genres || 'Não informado';
     
-    // AnotaÃ§Ãµes pessoais
+    // Anotações pessoais
     if (movie.notes) {
         detailsNotes.innerText = movie.notes;
         detailsNotesBox.style.display = 'block';
@@ -1160,7 +1225,7 @@ if (btnUpdateStreamings) {
         
         localStorage.setItem('myMovies', JSON.stringify(movies));
         renderMovies();
-        if (typeof updateProviderDropdown === 'function') updateProviderDropdown();
+        if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
         
         btnUpdateStreamings.innerHTML = `
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
@@ -1183,6 +1248,7 @@ if (clearAllBtn) {
             if (confirm("Voc\u00EA tem CERTEZA ABSOLUTA que deseja resetar a aplicAção?")) {
                 movies = [];
                 localStorage.removeItem('myMovies');
+                localStorage.removeItem('deletedMovies'); // Limpar tombstones junto com os dados
                 if (typeof resetJsonBin === 'function') {
                     resetJsonBin(true);
                 } else {
@@ -1211,6 +1277,8 @@ if (clearAllBtn) {
 const starsContainer = document.getElementById('details-stars');
 
 function updateModalStars(rating) {
+    // Bug #5 fix: Null-check em starsContainer — o elemento pode não existir no DOM
+    if (!starsContainer) return;
     starsContainer.innerHTML = generateStarsHTML(rating);
     const ratingText = document.getElementById('details-rating-text');
     if (ratingText) {
@@ -1224,7 +1292,7 @@ if (starsContainer) {
         const x = e.clientX - rect.left;
         const width = rect.width;
         let rating = (x / width) * 5;
-        // Arredonda para o 0.5 mais prÃ³ximo
+        // Arredonda para o 0.5 mais próximo
         rating = Math.ceil(rating * 2) / 2;
         if (rating < 0.5) rating = 0.5;
         if (rating > 5) rating = 5;
@@ -1252,6 +1320,7 @@ if (starsContainer) {
         if (movie.rating === val) val = 0; // Clique na mesma nota remove a nota
         
         movie.rating = val;
+        movie.updatedAt = Date.now();
         localStorage.setItem('myMovies', JSON.stringify(movies));
         
         updateModalStars(val);
@@ -1344,11 +1413,13 @@ function getRoulettePool() {
     }
 
     // 3. Tipo (Filme / Série / Livro / Todos)
+    // Bug #4 fix: Usar comparação direta, removendo a heurística frágil includes('S') && includes('rie')
+    // que o próprio projeto documentou como Bug #6 fix em renderMovies mas havia ficado aqui.
     if (rouletteFilters.type !== 'multi') {
         const target = rouletteFilters.type;
         pool = pool.filter(m => {
             const mType = m.type || 'Filme';
-            return mType === target || (target.includes('S') && mType.includes('rie'));
+            return mType === target;
         });
     }
 

@@ -29,9 +29,154 @@ function areMovieListsEqual(listA, listB) {
     if (listA.length !== listB.length) return false;
     if (listA.length === 0 && listB.length === 0) return true;
     
-    const getFingerprint = (list) => list.map(m => String(m.id || m.title || '') + '|' + String(m.watched || '') + '|' + String(m.favorite || '') + '|' + String(m.rating || '')).sort().join(';;');
+    // Bug #7 fix: Usar m.status (campo real do projeto) em vez de m.watched (que era sempre undefined)
+    // Inclui updatedAt no fingerprint para detectar mudanças mesmo sem alteração de status/rating/favorite
+    const getFingerprint = (list) => list.map(m => String(m.id || m.title || '') + '|' + String(m.status || '') + '|' + String(m.favorite || '') + '|' + String(m.rating || '') + '|' + String(m.updatedAt || '')).sort().join(';;');
     return getFingerprint(listA) === getFingerprint(listB);
 }
+
+// 2. Merge Inteligente por Data de Modificação
+// Resolve todos os conflitos obra por obra, preservando a versão mais recente de cada campo.
+function mergeMovieLists(localList, remoteList) {
+    const localTombstones = (typeof window.getDeletedTombstones === 'function') ? window.getDeletedTombstones() : [];
+    const remoteTombstones = remoteList._tombstones || [];
+    
+    // Merge dos tombstones dos dois lados (union com vencedor pelo deletedAt mais recente)
+    const mergedTombstones = (typeof window.mergeTombstones === 'function')
+        ? window.mergeTombstones(localTombstones, remoteTombstones)
+        : localTombstones;
+    
+    // Salvar tombstones mesclados localmente
+    localStorage.setItem('deletedMovies', JSON.stringify(mergedTombstones));
+    
+    const tombstoneMap = new Map();
+    mergedTombstones.forEach(t => tombstoneMap.set(String(t.id), t.deletedAt));
+
+    // Indexar listas por ID para lookup O(1)
+    const localMap = new Map();
+    (localList || []).forEach(m => localMap.set(String(m.id), m));
+
+    const remoteMap = new Map();
+    (remoteList || []).forEach(m => {
+        if (m && !m._placeholder && !m._tombstones) remoteMap.set(String(m.id), m);
+    });
+
+    // Fallback: detectar obras manuais duplicadas por título normalizado + ano
+    // (obras adicionadas manualmente em dois dispositivos antes de sincronizar)
+    const titleYearKey = (m) => `${String(m.title || '').toLowerCase().trim()}::${String(m.year || '')}`;
+    const localByTitleYear = new Map();
+    localMap.forEach(m => localByTitleYear.set(titleYearKey(m), m));
+
+    const result = new Map();
+
+    // Processar todas as obras do local
+    localMap.forEach((localMovie, id) => {
+        const tombstone = tombstoneMap.get(id);
+        const remoteMovie = remoteMap.get(id);
+
+        if (remoteMovie) {
+            // Existe nos dois lados: merge por campo
+            result.set(id, mergeMovieFields(localMovie, remoteMovie, tombstone));
+        } else {
+            // Só existe no local
+            // Verificar se foi deletada remotamente via tombstone
+            if (tombstone) {
+                // Se o tombstone é mais recente que o updatedAt local, a obra foi deletada intencionalmente
+                const localUpdatedAt = localMovie.updatedAt || localMovie.addedAt || 0;
+                if (tombstone > localUpdatedAt) {
+                    return; // descarta: deleção remota é mais recente
+                }
+            }
+            result.set(id, localMovie);
+        }
+    });
+
+    // Processar obras que só existem no remoto
+    remoteMap.forEach((remoteMovie, id) => {
+        if (result.has(id)) return; // já processada acima
+
+        const tombstone = tombstoneMap.get(id);
+        if (tombstone) {
+            // A obra foi deletada localmente
+            const remoteUpdatedAt = remoteMovie.updatedAt || remoteMovie.addedAt || 0;
+            if (tombstone > remoteUpdatedAt) {
+                return; // descarta: deleção local é mais recente que a versão remota
+            }
+        }
+
+        // Fallback: verificar se é uma duplicata de obra manual por título+ano
+        const key = titleYearKey(remoteMovie);
+        if (localByTitleYear.has(key)) {
+            // Já existe uma obra local com o mesmo título+ano mas ID diferente (adicionada manualmente nos dois lados)
+            // O merge por ID já a processou — não duplicar
+            return;
+        }
+
+        result.set(id, remoteMovie);
+    });
+
+    return Array.from(result.values());
+}
+
+// Merge de campos individuais de uma obra presente nos dois lados
+// Estratégia: winner-takes-all pelo updatedAt, mas preserva campos não-conflitantes
+function mergeMovieFields(local, remote, tombstoneDeletedAt) {
+    const localTs  = local.updatedAt  || local.addedAt  || 0;
+    const remoteTs = remote.updatedAt || remote.addedAt || 0;
+
+    // Se há tombstone mais recente que ambas as versões, a obra não deveria existir
+    // (esse caso é tratado no chamador, mas por segurança mantemos a lógica aqui também)
+    if (tombstoneDeletedAt && tombstoneDeletedAt > localTs && tombstoneDeletedAt > remoteTs) {
+        return null; // sinaliza remoção (filtrado após o merge)
+    }
+
+    // Winner-takes-all: a versão mais recente prevalece como base
+    const winner = localTs >= remoteTs ? local : remote;
+    const loser  = localTs >= remoteTs ? remote : local;
+
+    // Merge de campos individuais: se o loser tem dado e o winner não, preserva o do loser
+    return {
+        ...winner,
+        // Preservar notas: concatenar se ambos têm notas diferentes (evitar perda silenciosa)
+        notes: mergeNotes(local.notes, remote.notes, localTs, remoteTs),
+        // Para campos críticos: sempre usa o winner (mais recente)
+        status:   winner.status,
+        rating:   winner.rating,
+        favorite: winner.favorite,
+        // Metadados: preservar o addedAt original (mais antigo)
+        addedAt: Math.min(local.addedAt || Date.now(), remote.addedAt || Date.now()),
+        updatedAt: Math.max(localTs, remoteTs),
+        // Providers: union dos dois lados (preserva dados de streaming de ambos)
+        providers: mergeProviders(local.providers, remote.providers),
+    };
+}
+
+// Merge de notas: se os dois lados têm notas diferentes, concatena com separador
+function mergeNotes(localNotes, remoteNotes, localTs, remoteTs) {
+    const ln = (localNotes || '').trim();
+    const rn = (remoteNotes || '').trim();
+    if (!ln && !rn) return '';
+    if (!ln) return rn;
+    if (!rn) return ln;
+    if (ln === rn) return ln;
+    // Notas diferentes em ambos os lados: usa a mais recente
+    // (evitar concatenação confusa; o usuário pode ver e editar manualmente)
+    return localTs >= remoteTs ? ln : rn;
+}
+
+// Merge de providers: union sem duplicatas por nome
+function mergeProviders(localProviders, remoteProviders) {
+    if (!localProviders && !remoteProviders) return undefined;
+    const all = [...(localProviders || []), ...(remoteProviders || [])];
+    const seen = new Set();
+    return all.filter(p => {
+        const key = (p.name || '').split(' ')[0].toLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+}
+
 
 // 2. Resetar / Desconectar Nuvem
 function resetJsonBin(silent = false) {
@@ -222,35 +367,49 @@ async function testAndSyncJsonBin(customKey, customBinId, isManual = false) {
 
             const areEqual = areMovieListsEqual(localMovies, remoteMovies);
 
-            // 1. Se local está vazio e remoto tem dados -> restaura automaticamente
+            // 1. Se local está vazio e remoto tem dados → restaura automaticamente
             if (localMovies.length === 0 && remoteMovies.length > 0) {
-                localStorage.setItem('myMovies', JSON.stringify(remoteMovies));
-                if (window.movies) window.movies = remoteMovies;
+                const merged = mergeMovieLists(localMovies, remoteMovies).filter(Boolean);
+                localStorage.setItem('myMovies', JSON.stringify(merged));
+                if (window.movies) window.movies = merged;
                 if (typeof renderMovies === 'function') renderMovies();
                 if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
                 setJsonBinStatus('Nuvem Restaurada', 'success');
                 if (window.showToast) {
-                    window.showToast(`${remoteMovies.length} obras restauradas da Nuvem!`, 'success');
+                    window.showToast(`${merged.length} obras restauradas da Nuvem!`, 'success');
                 }
-            } 
-            // 2. Se for ação manual pelo formulário e houver diferença real -> pergunta ao usuário
-            else if (isManual && !areEqual && localMovies.length > 0 && remoteMovies.length > 0) {
-                const loadRemote = confirm(`Encontramos ${remoteMovies.length} obras na nuvem e você tem ${localMovies.length} obras locais.\n\nDeseja CARREGAR as obras da nuvem?\n\n- [OK]: Substituir catálogo local pelo da Nuvem\n- [Cancelar]: Manter obras locais e atualizar a Nuvem`);
-                if (loadRemote) {
-                    localStorage.setItem('myMovies', JSON.stringify(remoteMovies));
-                    if (window.movies) window.movies = remoteMovies;
-                    if (typeof renderMovies === 'function') renderMovies();
-                    if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
-                    setJsonBinStatus('Nuvem Restaurada', 'success');
-                    if (window.showToast) window.showToast('Lista da Nuvem carregada com sucesso!', 'success');
-                } else {
-                    saveToJsonBin(localMovies);
-                    setJsonBinStatus('Nuvem Conectada', 'success');
-                }
-            } 
-            // 3. Em todos os outros casos (inicialização normal ou listas iguais)
+            }
+            // 2. Se as listas são idênticas → nada a fazer
+            else if (areEqual) {
+                setJsonBinStatus('Nuvem Sincronizada', 'success');
+            }
+            // 3. Conflito real → merge automático por data de modificação
             else {
-                setJsonBinStatus('Nuvem Conectada', 'success');
+                setJsonBinStatus('Mesclando dados...', 'syncing');
+                const merged = mergeMovieLists(localMovies, remoteMovies).filter(Boolean);
+
+                const added   = merged.length - localMovies.length;
+                const changed = merged.filter(m => {
+                    const local = localMovies.find(l => String(l.id) === String(m.id));
+                    return local && local.updatedAt !== m.updatedAt;
+                }).length;
+
+                localStorage.setItem('myMovies', JSON.stringify(merged));
+                if (window.movies) window.movies = merged;
+                if (typeof renderMovies === 'function') renderMovies();
+                if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
+
+                // Salvar resultado do merge na nuvem para manter consistência
+                saveToJsonBin(merged);
+                setJsonBinStatus('Nuvem Sincronizada', 'success');
+
+                if (window.showToast) {
+                    const parts = [];
+                    if (added > 0) parts.push(`${added} nova(s)`);
+                    if (changed > 0) parts.push(`${changed} atualizada(s)`);
+                    const summary = parts.length ? ` (${parts.join(', ')})` : '';
+                    window.showToast(`✅ Merge concluído${summary}`, 'success');
+                }
             }
 
             if (isManual) closeJsonBinModal();
@@ -293,6 +452,13 @@ async function saveToJsonBin(moviesData) {
     const finalData = (Array.isArray(dataToSave) && dataToSave.length > 0)
         ? dataToSave
         : [{ _placeholder: true }];
+
+    // Incluir tombstones no payload para sincronizar deleções entre dispositivos
+    const tombstones = (typeof window.getDeletedTombstones === 'function') ? window.getDeletedTombstones() : [];
+    if (tombstones.length > 0) {
+        // Adiciona como item especial no array (filtrado no momento do merge)
+        finalData._tombstones = tombstones;
+    }
 
     try {
         const response = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {

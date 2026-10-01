@@ -146,7 +146,7 @@ function updateDrawerOptions() {
         const naoAssistidosCount = movies.filter(m => m.status !== 'assistido').length;
         const favoritosCount = movies.filter(m => m.favorite === true).length;
         const filmeCount = movies.filter(m => (m.type || 'Filme') === 'Filme').length;
-        const serieCount = movies.filter(m => m.type === 'S\u00E9rie' || (m.type && m.type.includes('rie'))).length;
+        const serieCount = movies.filter(m => m.type === 'Série').length;
         const livroCount = movies.filter(m => m.type === 'Livro').length;
 
         const elAssistido = document.getElementById('count-status-assistido');
