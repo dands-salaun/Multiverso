@@ -1183,10 +1183,14 @@ if (clearAllBtn) {
             if (confirm("Voc\u00EA tem CERTEZA ABSOLUTA que deseja resetar a aplicAção?")) {
                 movies = [];
                 localStorage.removeItem('myMovies');
-                localStorage.removeItem('jsonbin_api_key');
-                localStorage.removeItem('jsonbin_bin_id');
-                if (typeof updateJsonBinUIState === 'function') {
-                    updateJsonBinUIState();
+                if (typeof resetJsonBin === 'function') {
+                    resetJsonBin();
+                } else {
+                    localStorage.removeItem('jsonbin_api_key');
+                    localStorage.removeItem('jsonbin_bin_id');
+                    if (typeof updateJsonBinUIState === 'function') {
+                        updateJsonBinUIState();
+                    }
                 }
                 renderMovies(filterInput ? filterInput.value : '');
                 alert("Sua lista e as configura\u00E7\u00F5es da nuvem foram apagadas com sucesso.");

@@ -568,11 +568,65 @@
         </div>
     </div>
 
+    <!-- Modal de Configuração do JSONBin (Nuvem) -->
+    <div id="jsonbin-modal" class="modal">
+        <div class="modal-content" style="max-width: 520px;">
+            <button class="close-btn" id="close-jsonbin-modal" title="Fechar">&times;</button>
+            <h2 class="modal-header-title">Configurar Nuvem (JSONBin)</h2>
+            
+            <p style="font-size: 13px; color: var(--text-dim); margin-top: -12px; margin-bottom: 20px; line-height: 1.5;">
+                Sincronize sua biblioteca em tempo real entre diferentes dispositivos e navegadores.
+            </p>
+
+            <form id="jsonbin-form" onsubmit="return false;" style="display: flex; flex-direction: column; gap: 16px;">
+                <div>
+                    <label class="form-label" for="jsonbin-input-api-key" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span>X-Master-Key (Chave API) *</span>
+                        <a href="https://jsonbin.io/app/api-keys" target="_blank" rel="noopener" style="font-size: 11px; color: var(--primary-color); text-decoration: none;">Obter chave ↗</a>
+                    </label>
+                    <input type="password" id="jsonbin-input-api-key" class="form-input" placeholder="Cole sua $2a$10$... aqui" autocomplete="off">
+                </div>
+
+                <div>
+                    <label class="form-label" for="jsonbin-input-bin-id" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span>Bin ID (Opcional)</span>
+                        <span style="font-size: 11px; color: var(--text-faint);">Cole para conectar existente</span>
+                    </label>
+                    <div style="display: flex; gap: 8px;">
+                        <input type="text" id="jsonbin-input-bin-id" class="form-input" placeholder="Deixe em branco para criar um novo" autocomplete="off" style="font-family: monospace; font-size: 12px;">
+                        <button type="button" id="btn-copy-bin-id" class="btn secondary" title="Copiar Bin ID" style="display: none; padding: 0 12px; white-space: nowrap;">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <div id="jsonbin-modal-status-box" style="display: none; background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; font-size: 12px; color: var(--text-dim);">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Status: <strong id="jsonbin-modal-status-text" style="color: var(--success);">Conectado</strong></span>
+                        <span id="jsonbin-modal-count-text" style="color: var(--text-faint);"></span>
+                    </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; margin-top: 10px; flex-wrap: wrap;">
+                    <button type="button" id="btn-save-jsonbin" class="btn primary" style="flex: 1; min-width: 140px;">
+                        Salvar e Conectar
+                    </button>
+                    <button type="button" id="btn-create-new-bin" class="btn secondary" style="flex: 1; min-width: 140px;">
+                        Criar Novo Bin
+                    </button>
+                    <button type="button" id="btn-disconnect-jsonbin" class="btn danger" style="display: none; width: 100%;">
+                        Desconectar da Nuvem
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+
     <!-- Toast Notifications Container -->
     <div id="toast-container"></div>
 
-    <script src="jsonbin-sync.js?v=57"></script>
-    <script src="drawer-filters.js?v=57"></script>
-    <script src="app.js?v=57"></script>
+    <script src="jsonbin-sync.js?v=64"></script>
+    <script src="drawer-filters.js?v=64"></script>
+    <script src="app.js?v=64"></script>
 </body>
 </html>
