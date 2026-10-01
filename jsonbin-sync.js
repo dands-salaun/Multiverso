@@ -65,6 +65,7 @@ async function createNewBin() {
     setJsonBinStatus('Criando arquivo na Nuvem...', 'syncing');
 
     const localMovies = JSON.parse(localStorage.getItem('myMovies')) || [];
+    const dataToSave = localMovies.length === 0 ? [{"_placeholder": true}] : localMovies;
 
     try {
         const response = await fetch('https://api.jsonbin.io/v3/b', {
@@ -75,7 +76,7 @@ async function createNewBin() {
                 'X-Bin-Private': 'true',
                 'X-Bin-Name': 'multiverso_backup'
             },
-            body: JSON.stringify(localMovies)
+            body: JSON.stringify(dataToSave)
         });
 
         const data = await response.json();
@@ -122,7 +123,11 @@ async function testAndSyncJsonBin() {
             isJsonBinConnected = true;
             updateJsonBinUIState();
 
-            const remoteMovies = data.record;
+            let remoteMovies = data.record;
+            if (Array.isArray(remoteMovies) && remoteMovies.length === 1 && remoteMovies[0]._placeholder) {
+                remoteMovies = [];
+            }
+            
             const localMovies = JSON.parse(localStorage.getItem('myMovies')) || [];
 
             // Se o local estiver vazio e o remoto tiver dados, restaura automaticamente
@@ -152,6 +157,7 @@ async function saveToJsonBin(moviesData) {
     setJsonBinStatus('Salvando na Nuvem...', 'syncing');
 
     const dataToSave = moviesData || JSON.parse(localStorage.getItem('myMovies')) || [];
+    const finalData = dataToSave.length === 0 ? [{"_placeholder": true}] : dataToSave;
 
     try {
         const response = await fetch(`https://api.jsonbin.io/v3/b/${JSONBIN_BIN_ID}`, {
@@ -160,7 +166,7 @@ async function saveToJsonBin(moviesData) {
                 'Content-Type': 'application/json',
                 'X-Master-Key': JSONBIN_API_KEY
             },
-            body: JSON.stringify(dataToSave)
+            body: JSON.stringify(finalData)
         });
 
         if (response.ok) {
