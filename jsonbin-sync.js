@@ -23,7 +23,17 @@ localStorage.setItem = function(key, value) {
     }
 };
 
-// 1. Resetar / Desconectar Nuvem
+// 1. Comparador Inteligente de Listas (evita falsos conflitos)
+function areMovieListsEqual(listA, listB) {
+    if (!Array.isArray(listA) || !Array.isArray(listB)) return false;
+    if (listA.length !== listB.length) return false;
+    if (listA.length === 0 && listB.length === 0) return true;
+    
+    const getFingerprint = (list) => list.map(m => String(m.id || m.title || '') + '|' + String(m.watched || '') + '|' + String(m.favorite || '') + '|' + String(m.rating || '')).sort().join(';;');
+    return getFingerprint(listA) === getFingerprint(listB);
+}
+
+// 2. Resetar / Desconectar Nuvem
 function resetJsonBin(silent = false) {
     clearTimeout(autoSaveJsonBinTimeout);
     localStorage.removeItem('jsonbin_api_key');
@@ -31,6 +41,19 @@ function resetJsonBin(silent = false) {
     JSONBIN_API_KEY = '';
     JSONBIN_BIN_ID = '';
     isJsonBinConnected = false;
+    
+    const inputKey = document.getElementById('jsonbin-input-api-key');
+    const inputBinId = document.getElementById('jsonbin-input-bin-id');
+    if (inputKey) inputKey.value = '';
+    if (inputBinId) inputBinId.value = '';
+
+    const btnCopy = document.getElementById('btn-copy-bin-id');
+    const btnDisconnect = document.getElementById('btn-disconnect-jsonbin');
+    const statusBox = document.getElementById('jsonbin-modal-status-box');
+    if (btnCopy) btnCopy.style.display = 'none';
+    if (btnDisconnect) btnDisconnect.style.display = 'none';
+    if (statusBox) statusBox.style.display = 'none';
+
     updateJsonBinUIState();
     setJsonBinStatus('Nuvem Desconectada', 'offline');
     if (!silent && window.showToast) {
@@ -38,7 +61,7 @@ function resetJsonBin(silent = false) {
     }
 }
 
-// 2. Modal do JSONBin
+// 3. Modal do JSONBin
 function openJsonBinModal() {
     const modal = document.getElementById('jsonbin-modal');
     if (!modal) return;
@@ -82,7 +105,7 @@ function configureJsonBin() {
     openJsonBinModal();
 }
 
-// 3. Criar um Bin Privado Automático
+// 4. Criar um Bin Privado Automático
 async function createNewBin(customKey) {
     const keyToUse = (customKey || JSONBIN_API_KEY || '').trim();
     if (!keyToUse) {
@@ -152,8 +175,8 @@ async function createNewBin(customKey) {
     }
 }
 
-// 4. Testar Conexão e Sincronizar (Carregar ou Salvar)
-async function testAndSyncJsonBin(customKey, customBinId) {
+// 5. Testar Conexão e Sincronizar (Carregar ou Salvar)
+async function testAndSyncJsonBin(customKey, customBinId, isManual = false) {
     const keyToUse = (customKey || JSONBIN_API_KEY || '').trim();
     const binIdToUse = (customBinId || JSONBIN_BIN_ID || '').trim();
 
@@ -184,7 +207,7 @@ async function testAndSyncJsonBin(customKey, customBinId) {
 
             let remoteMovies = data.record;
             if (Array.isArray(remoteMovies)) {
-                remoteMovies = remoteMovies.filter(item => !item || !item._placeholder);
+                remoteMovies = remoteMovies.filter(item => item && !item._placeholder);
             } else {
                 remoteMovies = [];
             }
@@ -197,50 +220,60 @@ async function testAndSyncJsonBin(customKey, customBinId) {
                 localMovies = [];
             }
 
-            // Se local está vazio e remoto tem dados, restaura automaticamente
+            const areEqual = areMovieListsEqual(localMovies, remoteMovies);
+
+            // 1. Se local está vazio e remoto tem dados -> restaura automaticamente
             if (localMovies.length === 0 && remoteMovies.length > 0) {
                 localStorage.setItem('myMovies', JSON.stringify(remoteMovies));
                 if (window.movies) window.movies = remoteMovies;
                 if (typeof renderMovies === 'function') renderMovies();
+                if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
                 setJsonBinStatus('Nuvem Restaurada', 'success');
                 if (window.showToast) {
                     window.showToast(`${remoteMovies.length} obras restauradas da Nuvem!`, 'success');
-                } else {
-                    alert('Sua lista foi restaurada automaticamente da Nuvem!');
                 }
-            } else if (localMovies.length > 0 && remoteMovies.length > 0 && JSON.stringify(localMovies) !== JSON.stringify(remoteMovies)) {
+            } 
+            // 2. Se for ação manual pelo formulário e houver diferença real -> pergunta ao usuário
+            else if (isManual && !areEqual && localMovies.length > 0 && remoteMovies.length > 0) {
                 const loadRemote = confirm(`Encontramos ${remoteMovies.length} obras na nuvem e você tem ${localMovies.length} obras locais.\n\nDeseja CARREGAR as obras da nuvem?\n\n- [OK]: Substituir catálogo local pelo da Nuvem\n- [Cancelar]: Manter obras locais e atualizar a Nuvem`);
                 if (loadRemote) {
                     localStorage.setItem('myMovies', JSON.stringify(remoteMovies));
                     if (window.movies) window.movies = remoteMovies;
                     if (typeof renderMovies === 'function') renderMovies();
+                    if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
                     setJsonBinStatus('Nuvem Restaurada', 'success');
                     if (window.showToast) window.showToast('Lista da Nuvem carregada com sucesso!', 'success');
                 } else {
                     saveToJsonBin(localMovies);
                     setJsonBinStatus('Nuvem Conectada', 'success');
                 }
-            } else {
+            } 
+            // 3. Em todos os outros casos (inicialização normal ou listas iguais)
+            else {
                 setJsonBinStatus('Nuvem Conectada', 'success');
             }
 
-            closeJsonBinModal();
+            if (isManual) closeJsonBinModal();
             return true;
         } else {
             console.error('Falha ao conectar no Bin:', data);
-            alert('Falha ao acessar o Bin ID informado. Verifique se o ID e a Chave estão corretos. (Erro: ' + (data.message || 'Não encontrado') + ')');
+            if (isManual) {
+                alert('Falha ao acessar o Bin ID informado. Verifique se o ID e a Chave estão corretos. (Erro: ' + (data.message || 'Não encontrado') + ')');
+            }
             setJsonBinStatus('Erro no Bin', 'error');
             return false;
         }
     } catch (err) {
         console.error('Erro ao buscar dados do JSONBin:', err);
         setJsonBinStatus('Erro na Nuvem', 'error');
-        alert('Erro ao conectar com o servidor do JSONBin. Verifique sua conexão.');
+        if (isManual) {
+            alert('Erro ao conectar com o servidor do JSONBin. Verifique sua conexão.');
+        }
         return false;
     }
 }
 
-// 5. Salvar Alterações no JSONBin
+// 6. Salvar Alterações no JSONBin
 async function saveToJsonBin(moviesData) {
     if (!JSONBIN_API_KEY || !JSONBIN_BIN_ID) return;
 
@@ -295,9 +328,19 @@ function triggerAutoJsonBinBackup() {
     }, 1500);
 }
 
-// 6. Interface de Usuário
+// 7. Interface de Usuário
 function updateJsonBinUIState() {
     btnJsonBinSync = document.getElementById('btn-jsonbin-sync');
+    jsonBinStatusIndicator = document.getElementById('jsonbin-status-indicator');
+
+    if (jsonBinStatusIndicator && !jsonBinStatusIndicator.dataset.bound) {
+        jsonBinStatusIndicator.dataset.bound = 'true';
+        jsonBinStatusIndicator.title = 'Configurações da Nuvem (JSONBin)';
+        jsonBinStatusIndicator.onclick = function(e) {
+            e.preventDefault();
+            configureJsonBin();
+        };
+    }
 
     if (btnJsonBinSync && !btnJsonBinSync.dataset.bound) {
         btnJsonBinSync.dataset.bound = 'true';
@@ -327,6 +370,7 @@ function setJsonBinStatus(text, state = 'info') {
     if (state === 'syncing') dotColor = 'var(--warning)';
     else if (state === 'success') dotColor = 'var(--success)';
     else if (state === 'error') dotColor = 'var(--danger)';
+    else if (state === 'offline') dotColor = 'var(--text-faint)';
 
     jsonBinStatusIndicator.innerHTML = `
         <span style="display:inline-block; width:7px; height:7px; border-radius:50%; background:${dotColor}; box-shadow: 0 0 8px ${dotColor};"></span>
@@ -334,7 +378,7 @@ function setJsonBinStatus(text, state = 'info') {
     `;
 }
 
-// Inicialização dos eventos do modal
+// 8. Inicialização dos eventos do modal
 function initJsonBinModalEvents() {
     const modal = document.getElementById('jsonbin-modal');
     const closeBtn = document.getElementById('close-jsonbin-modal');
@@ -381,7 +425,7 @@ function initJsonBinModalEvents() {
                 // Conectar ao Bin ID informado
                 btnSave.disabled = true;
                 btnSave.textContent = 'Conectando...';
-                await testAndSyncJsonBin(key, binId);
+                await testAndSyncJsonBin(key, binId, true);
                 btnSave.disabled = false;
                 btnSave.textContent = 'Salvar e Conectar';
             } else {
@@ -417,8 +461,6 @@ function initJsonBinModalEvents() {
         btnDisconnect.onclick = () => {
             if (confirm('Deseja realmente desconectar a Nuvem deste dispositivo? Os dados locais não serão apagados.')) {
                 resetJsonBin();
-                if (inputKey) inputKey.value = '';
-                if (inputBinId) inputBinId.value = '';
                 closeJsonBinModal();
             }
         };
@@ -430,7 +472,7 @@ document.addEventListener('DOMContentLoaded', () => {
     initJsonBinModalEvents();
     updateJsonBinUIState();
     if (JSONBIN_API_KEY && JSONBIN_BIN_ID) {
-        testAndSyncJsonBin();
+        testAndSyncJsonBin(undefined, undefined, false);
     } else {
         setJsonBinStatus('Nuvem Desconectada', 'offline');
     }

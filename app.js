@@ -1184,16 +1184,25 @@ if (clearAllBtn) {
                 movies = [];
                 localStorage.removeItem('myMovies');
                 if (typeof resetJsonBin === 'function') {
-                    resetJsonBin();
+                    resetJsonBin(true);
                 } else {
                     localStorage.removeItem('jsonbin_api_key');
                     localStorage.removeItem('jsonbin_bin_id');
-                    if (typeof updateJsonBinUIState === 'function') {
-                        updateJsonBinUIState();
-                    }
+                }
+                if (typeof updateJsonBinUIState === 'function') {
+                    updateJsonBinUIState();
+                }
+                if (typeof setJsonBinStatus === 'function') {
+                    setJsonBinStatus('Nuvem Desconectada', 'offline');
                 }
                 renderMovies(filterInput ? filterInput.value : '');
-                alert("Sua lista e as configura\u00E7\u00F5es da nuvem foram apagadas com sucesso.");
+                if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
+                if (hamburgerMenu) hamburgerMenu.style.display = 'none';
+                if (window.showToast) {
+                    window.showToast('Aplicação e dados da Nuvem resetados com sucesso.', 'info');
+                } else {
+                    alert("Sua lista e as configurações da nuvem foram apagadas com sucesso.");
+                }
             }
         }
     };
