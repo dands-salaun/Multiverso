@@ -747,7 +747,7 @@ async function selectSuggestion(id, typePath, rawData = null, source = null) {
             if (rawData && rawData.volumeInfo) {
                 info = rawData.volumeInfo;
             } else {
-                const res = await fetch(`https://www.googleapis.com/books/v1/volumes/${id}`);
+                const res = await fetch(`https://www.googleapis.com/books/v1/volumes/${id}?key=${googleBooksApiKey}`);
                 const data = await res.json();
                 info = data.volumeInfo;
             }
@@ -970,6 +970,109 @@ if (btnCancelForm) {
 
 let currentMovieIdForRating = null;
 
+// Busca e atualiza as informações de uma obra a partir da API correspondente.
+// Livros: Google Books (primário, com API Key) → OpenLibrary (fallback)
+// Filmes/Séries: TMDB (pt-BR + credits)
+// Retorna true em caso de sucesso, false em caso de erro.
+async function fetchAndUpdateObra(movie) {
+    try {
+        if (movie.type === 'Livro') {
+            // --- Google Books (primário) ---
+            let info = null;
+            try {
+                const res = await fetch(
+                    `https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(movie.title)}&maxResults=1&key=${googleBooksApiKey}`
+                );
+                if (res.ok) {
+                    const data = await res.json();
+                    if (data.items && data.items.length > 0) {
+                        info = data.items[0].volumeInfo;
+                        movie.source = 'books';
+                    }
+                }
+            } catch(e) {
+                console.log('fetchAndUpdateObra: Google Books falhou, tentando OpenLibrary', e);
+            }
+
+            if (info) {
+                if (info.title) movie.title = info.title;
+                if (info.publishedDate) movie.year = info.publishedDate.substring(0, 4);
+                if (info.authors && info.authors.length > 0) movie.director = info.authors.join(', ');
+                if (info.categories && info.categories.length > 0) movie.genres = info.categories.join(', ');
+                if (info.description) movie.overview = info.description;
+                if (info.imageLinks && info.imageLinks.thumbnail) {
+                    movie.poster = info.imageLinks.thumbnail.replace('http:', 'https:').replace('zoom=1', 'zoom=3');
+                }
+            } else {
+                // --- OpenLibrary (fallback) ---
+                const olRes = await fetch(
+                    `https://openlibrary.org/search.json?q=${encodeURIComponent(movie.title)}&limit=1`
+                );
+                if (!olRes.ok) throw new Error('OpenLibrary falhou');
+                const olData = await olRes.json();
+                if (olData.docs && olData.docs.length > 0) {
+                    const item = olData.docs[0];
+                    if (item.title) movie.title = item.title;
+                    if (item.first_publish_year) movie.year = item.first_publish_year.toString();
+                    if (item.author_name && item.author_name.length > 0) movie.director = item.author_name.join(', ');
+                    if (item.subject && item.subject.length > 0) movie.genres = item.subject.slice(0, 3).join(', ');
+                    movie.overview = 'Resumo não disponível pela OpenLibrary.';
+                    if (item.cover_i) movie.poster = `https://covers.openlibrary.org/b/id/${item.cover_i}-L.jpg`;
+                    movie.source = 'openlibrary';
+                }
+            }
+
+        } else {
+            // --- TMDB (Filmes e Séries) ---
+            const typePath = (movie.type === 'Série' || movie.type === 'tv') ? 'tv' : 'movie';
+            const detailsRes = await fetch(
+                `https://api.themoviedb.org/3/${typePath}/${movie.id}?api_key=${apiKey}&language=pt-BR&append_to_response=credits`
+            );
+            if (!detailsRes.ok) throw new Error(`TMDB retornou ${detailsRes.status}`);
+            const details = await detailsRes.json();
+
+            if (details.poster_path) movie.poster = `https://image.tmdb.org/t/p/w500${details.poster_path}`;
+            if (details.overview) movie.overview = details.overview;
+            if (details.genres && details.genres.length > 0) movie.genres = details.genres.map(g => g.name).join(', ');
+
+            const releaseDate = details.release_date || details.first_air_date || '';
+            if (releaseDate) movie.year = releaseDate.substring(0, 4);
+
+            if (details.original_title || details.original_name) {
+                movie.originalTitle = details.original_title || details.original_name;
+            }
+
+            if (typePath === 'movie' && details.credits && details.credits.crew) {
+                const directors = details.credits.crew.filter(c => c.job === 'Director').map(c => c.name);
+                if (directors.length > 0) movie.director = directors.join(', ');
+            } else if (typePath === 'tv' && details.created_by && details.created_by.length > 0) {
+                movie.director = details.created_by.map(c => c.name).join(', ');
+            }
+
+            if (details.origin_country && details.origin_country.length > 0) {
+                movie.country = details.origin_country.map(c =>
+                    (typeof COUNTRY_MAP !== 'undefined' && COUNTRY_MAP[c]) || c
+                ).join(', ');
+            } else if (details.production_countries && details.production_countries.length > 0) {
+                movie.country = details.production_countries.map(c =>
+                    (typeof COUNTRY_MAP !== 'undefined' && COUNTRY_MAP[c.iso_3166_1]) || c.name
+                ).join(', ');
+            }
+
+            // Atualiza providers (streaming)
+            movie.providers = undefined;
+            await loadProviders(movie);
+        }
+
+        movie.updatedAt = Date.now();
+        return true;
+
+    } catch(e) {
+        console.error('fetchAndUpdateObra: erro ao atualizar obra', movie.title, e);
+        return false;
+    }
+}
+
 // Exibir detalhes
 window.showDetails = async function(id) {
     const movie = movies.find(m => m.id === id);
@@ -1101,6 +1204,63 @@ window.showDetails = async function(id) {
             
             if (autoSuggestions) autoSuggestions.style.display = 'none';
             if (searchModal) searchModal.style.display = 'block';
+        };
+    }
+
+    // Botão Atualizar Informações — busca dados frescos da API para esta obra
+    const detailsRefreshBtn = document.getElementById('details-refresh-btn');
+    if (detailsRefreshBtn) {
+        detailsRefreshBtn.onclick = async () => {
+            detailsRefreshBtn.disabled = true;
+            detailsRefreshBtn.innerHTML = '<span>Buscando...</span>';
+
+            const sucesso = await fetchAndUpdateObra(movie);
+
+            if (sucesso) {
+                // Atualiza campos visuais do popup sem fechar
+                detailsPoster.src = movie.poster || POSTER_PLACEHOLDER;
+                detailsTitle.innerText = movie.englishTitle || movie.originalTitle || movie.title || '';
+                detailsYear.innerText = movie.year ? `(${movie.year})` : '';
+                detailsDirector.innerText = movie.director || 'Desconhecido';
+                detailsGenres.innerText = movie.genres || 'Não informado';
+                detailsOverview.innerText = movie.overview || 'Nenhum resumo disponível.';
+
+                // Atualiza título original e AKA
+                const origWrap = document.getElementById('details-original-title-wrap');
+                if (origWrap) {
+                    if (movie.originalTitle) {
+                        detailsOriginalTitle.innerText = movie.originalTitle;
+                        origWrap.style.display = 'block';
+                    } else {
+                        origWrap.style.display = 'none';
+                    }
+                }
+
+                // Atualiza providers se existirem
+                const detailsProviders = document.getElementById('details-providers');
+                const detailsProvidersIcons = document.getElementById('details-providers-icons');
+                if (movie.providers && movie.providers.length > 0) {
+                    detailsProvidersIcons.innerHTML = movie.providers.slice(0, 8).map(p =>
+                        `<img src="https://image.tmdb.org/t/p/w45${p.logo}" class="provider-logo" title="Disponível em: ${p.name}" alt="${p.name}">`
+                    ).join('');
+                    detailsProviders.style.display = 'block';
+                } else {
+                    detailsProviders.style.display = 'none';
+                }
+
+                localStorage.setItem('myMovies', JSON.stringify(movies));
+                renderMovies();
+                if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
+                if (window.showToast) window.showToast('Informações atualizadas com sucesso!', 'success');
+            } else {
+                if (window.showToast) window.showToast('Erro ao buscar informações. Tente novamente.', 'error');
+            }
+
+            detailsRefreshBtn.innerHTML = `
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
+                <span>Atualizar</span>
+            `;
+            detailsRefreshBtn.disabled = false;
         };
     }
 
