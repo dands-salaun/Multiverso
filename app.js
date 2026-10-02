@@ -26,6 +26,17 @@ movies.forEach(m => {
             m.country = cleanedCountry;
             cacheUpdated = true;
         }
+        // Migração: converter siglas ISO salvas para nomes completos em português
+        if (typeof COUNTRY_MAP !== 'undefined') {
+            const converted = m.country.split(',').map(part => {
+                const code = part.trim();
+                return COUNTRY_MAP[code] || code;
+            }).join(', ');
+            if (converted !== m.country) {
+                m.country = converted;
+                cacheUpdated = true;
+            }
+        }
     }
 });
 if (cacheUpdated) {
