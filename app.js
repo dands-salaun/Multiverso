@@ -84,9 +84,10 @@ window.mergeTombstones = function(local, remote) {
     return Array.from(map.values());
 };
 
-// AVISO DE SEGURANÇA: A API Key do TMDB está exposta no frontend, o que é uma limitação
+// AVISO DE SEGURANÇA: As API Keys estão expostas no frontend, o que é uma limitação
 // conhecida de aplicações puramente client-side. Considere usar um proxy server em produção.
-const apiKey = '15d2ea6d0dc1d476efbca3eba2b9bbfb';
+const apiKey = '15d2ea6d0dc1d476efbca3eba2b9bbfb';         // TMDB
+const googleBooksApiKey = 'AIzaSyBgF94ESL-dnP4_8xo2Y_HsRdGhQnpgigs'; // Google Books
 
 // Bug #3 fix: Função para sanitizar strings e prevenir XSS ao inserir via innerHTML
 function sanitizeHtml(str) {
@@ -621,15 +622,9 @@ async function performAutoFetch() {
         if (typePath === 'book' || typePath === 'multi') {
             let foundBooks = false;
 
-            // Fonte primária: Google Books
-            // NOTA: Atualmente sem API Key — a cota anônima pode ser esgotada (erro 429),
-            // fazendo o fallback para OpenLibrary ser ativado com frequência.
-            // TODO: Adicionar &key=SUA_CHAVE_AQUI na URL abaixo quando a API Key do Google
-            //       Books estiver disponível (console.cloud.google.com → Books API → Credentials).
-            //       Com a chave, a cota sobe para 1.000 req/dia gratuitas e os resultados
-            //       ficam mais ricos (sinopse, categorias, capas de alta qualidade).
+            // Fonte primária: Google Books (com API Key)
             try {
-                const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15`);
+                const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&key=${googleBooksApiKey}`);
                 if (res.ok) {
                     const data = await res.json();
                     if (data.items && data.items.length > 0) {
