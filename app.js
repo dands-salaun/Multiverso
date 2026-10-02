@@ -157,6 +157,7 @@ const closeDetails = document.getElementById('close-details');
 const detailsPoster = document.getElementById('details-poster');
 const detailsTitle = document.getElementById('details-title');
 const detailsOriginalTitle = document.getElementById('details-original-title');
+const detailsAkaTitle = document.getElementById('details-aka-title');
 const detailsBadge = document.getElementById('details-badge');
 const detailsOverview = document.getElementById('details-overview');
 const detailsNotesBox = document.getElementById('details-notes-box');
@@ -388,7 +389,11 @@ function renderMovies(filter = '') {
         } else if (sortVal === 'rating') {
             filteredMovies.sort((a, b) => (b.rating || 0) - (a.rating || 0));
         } else if (sortVal === 'az') {
-            filteredMovies.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+            filteredMovies.sort((a, b) => {
+                const titleA = a.englishTitle || a.originalTitle || a.title || '';
+                const titleB = b.englishTitle || b.originalTitle || b.title || '';
+                return titleA.localeCompare(titleB);
+            });
         } else if (sortVal === 'year') {
             filteredMovies.sort((a, b) => (parseInt(b.year) || 0) - (parseInt(a.year) || 0));
         }
@@ -443,8 +448,9 @@ function renderMovies(filter = '') {
             
             const starsDisplay = movie.rating ? '<div class="card-rating-badge" title="Sua nota: ' + movie.rating + '/5">' + generateStarsHTML(movie.rating) + '</div>' : '';
 
-            // Bug #3 fix: Usar sanitizeHtml em dados que vêm do usuário/API antes de inserir via innerHTML
-            const safeTitle = sanitizeHtml(movie.title || '');
+            // Tela principal sempre exibe o título em inglês; fallback para original e depois pt-BR
+            const displayTitle = movie.englishTitle || movie.originalTitle || movie.title || '';
+            const safeTitle = sanitizeHtml(displayTitle);
             const safePoster = sanitizeHtml(movie.poster || POSTER_PLACEHOLDER);
             const safeType = sanitizeHtml(movie.type || 'Filme');
 
@@ -772,7 +778,16 @@ async function selectSuggestion(id, typePath, rawData = null, source = null) {
             // Filme ou Série
             const detailsRes = await fetch(`https://api.themoviedb.org/3/${typePath}/${id}?api_key=${apiKey}&language=pt-BR&append_to_response=credits`);
             const details = await detailsRes.json();
-            
+
+            // Busca título em inglês para exibição nos cards da tela principal
+            try {
+                const enRes = await fetch(`https://api.themoviedb.org/3/${typePath}/${id}?api_key=${apiKey}&language=en-US`);
+                const enDetails = await enRes.json();
+                window.lastFetchedEnglishTitle = enDetails.title || enDetails.name || '';
+            } catch(e) {
+                window.lastFetchedEnglishTitle = '';
+            }
+
             window.lastFetchedOriginalTitle = details.original_title || details.original_name || details.title || details.name || '';
             if (formAutoTitle) formAutoTitle.value = details.title || details.name;
             
@@ -916,6 +931,7 @@ if (btnSaveForm) btnSaveForm.onclick = () => {
         id: id,
         title: title,
         originalTitle: (typeof window.lastFetchedOriginalTitle !== 'undefined' && window.lastFetchedOriginalTitle) ? window.lastFetchedOriginalTitle : (existingMovie ? existingMovie.originalTitle : title),
+        englishTitle: (typeof window.lastFetchedEnglishTitle !== 'undefined' && window.lastFetchedEnglishTitle) ? window.lastFetchedEnglishTitle : (existingMovie ? existingMovie.englishTitle : ''),
         type: typeMap[formAutoType.value] || 'Filme',
         // Bug #14 fix: Usar POSTER_PLACEHOLDER local em vez de via.placeholder.com (serviço externo instável)
         poster: formPosterUrl.value.trim() || POSTER_PLACEHOLDER,
@@ -968,18 +984,31 @@ window.showDetails = async function(id) {
 
     detailsPoster.onerror = () => { detailsPoster.src = POSTER_PLACEHOLDER; };
     detailsPoster.src = movie.poster || POSTER_PLACEHOLDER;
-    detailsTitle.innerText = movie.title;
+    // Popup: exibe o mesmo título do card (englishTitle → originalTitle → title)
+    const popupDisplayTitle = movie.englishTitle || movie.originalTitle || movie.title || '';
+    detailsTitle.innerText = popupDisplayTitle;
 
+    // "Título Original:" — sempre exibido se existir, independente do idioma (inglês, chinês, etc.)
     const origWrap = document.getElementById('details-original-title-wrap');
     if (origWrap) {
-        if (movie.originalTitle && movie.originalTitle !== movie.title) {
+        if (movie.originalTitle) {
             detailsOriginalTitle.innerText = movie.originalTitle;
             origWrap.style.display = 'block';
         } else {
             origWrap.style.display = 'none';
         }
-    } else {
-        detailsOriginalTitle.innerText = (movie.originalTitle && movie.originalTitle !== movie.title) ? movie.originalTitle : '';
+    }
+
+    // "AKA:" — inline ao lado do Título Original; aparece quando há título PT diferente do original
+    const akaWrap = document.getElementById('details-aka-wrap');
+    const ptTitle = movie.title || '';
+    if (akaWrap) {
+        if (ptTitle && ptTitle !== movie.originalTitle) {
+            if (detailsAkaTitle) detailsAkaTitle.innerText = ptTitle;
+            akaWrap.style.display = 'inline';
+        } else {
+            akaWrap.style.display = 'none';
+        }
     }
 
     detailsBadge.innerText = movie.type || 'Filme';
@@ -1294,6 +1323,17 @@ if (btnUpdateObras) {
                 // Atualiza título original
                 if (details.original_title || details.original_name) {
                     m.originalTitle = details.original_title || details.original_name;
+                }
+
+                // Atualiza título em inglês (campo novo: usado na tela principal)
+                try {
+                    const enDetailsRes = await fetch(`https://api.themoviedb.org/3/${typePath}/${m.id}?api_key=${apiKey}&language=en-US`);
+                    if (enDetailsRes.ok) {
+                        const enDetails = await enDetailsRes.json();
+                        m.englishTitle = enDetails.title || enDetails.name || m.englishTitle || '';
+                    }
+                } catch(e) {
+                    // Mantém o valor existente em caso de erro
                 }
 
                 // Atualiza países de origem
