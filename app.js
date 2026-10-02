@@ -611,9 +611,17 @@ async function performAutoFetch() {
             }
         }
         
-        // Buscar no Google Books (Livros)
+        // Buscar Livros
         if (typePath === 'book' || typePath === 'multi') {
             let foundBooks = false;
+
+            // Fonte primária: Google Books
+            // NOTA: Atualmente sem API Key — a cota anônima pode ser esgotada (erro 429),
+            // fazendo o fallback para OpenLibrary ser ativado com frequência.
+            // TODO: Adicionar &key=SUA_CHAVE_AQUI na URL abaixo quando a API Key do Google
+            //       Books estiver disponível (console.cloud.google.com → Books API → Credentials).
+            //       Com a chave, a cota sobe para 1.000 req/dia gratuitas e os resultados
+            //       ficam mais ricos (sinopse, categorias, capas de alta qualidade).
             try {
                 const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15`);
                 if (res.ok) {
@@ -623,26 +631,29 @@ async function performAutoFetch() {
                         const bookResults = data.items.map(item => {
                             const info = item.volumeInfo;
                             return {
-                                id: item.id, // Google books uses string IDs
+                                id: item.id, // Google Books usa IDs em string
                                 type: 'book',
                                 title: info.title,
                                 year: (info.publishedDate || '').substring(0, 4),
-                                poster: info.imageLinks && info.imageLinks.thumbnail ? info.imageLinks.thumbnail.replace('http:', 'https:') : POSTER_PLACEHOLDER,
+                                poster: info.imageLinks && info.imageLinks.thumbnail
+                                    ? info.imageLinks.thumbnail.replace('http:', 'https:')
+                                    : POSTER_PLACEHOLDER,
                                 source: 'books',
-                                rawData: item // Guardamos para não ter que buscar de novo
+                                rawData: item
                             };
                         });
                         results = results.concat(bookResults);
                     }
                 }
             } catch(e) {
-                console.log("Erro no Google Books API (Possível limite de requisições)", e);
+                console.log("Erro no Google Books API (possível limite de requisições sem API Key)", e);
             }
-            
-            // Fallback para OpenLibrary se Não achar nada ou der erro 429
+
+            // Fallback: Open Library — usada quando o Google Books falha ou não retorna resultados
+            // Referência: https://openlibrary.org/developers/api
             if (!foundBooks) {
                 try {
-                    const olRes = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=5`);
+                    const olRes = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=10`);
                     if (olRes.ok) {
                         const olData = await olRes.json();
                         if (olData.docs && olData.docs.length > 0) {
@@ -1177,7 +1188,7 @@ if (btnHamburger && hamburgerMenu) {
 const exportBtn = document.getElementById('export-backup');
 const importInput = document.getElementById('import-backup');
 const clearAllBtn = document.getElementById('clear-all-data');
-const btnUpdateStreamings = document.getElementById('btn-update-streamings');
+const btnUpdateObras = document.getElementById('btn-update-obras');
 
 if (exportBtn) {
     exportBtn.onclick = () => {
@@ -1220,31 +1231,110 @@ if (importInput) {
     };
 }
 
-if (btnUpdateStreamings) {
-    btnUpdateStreamings.onclick = async () => {
-        if (!confirm('Deseja atualizar os streamings de toda a sua biblioteca? Isso pode levar alguns segundos.')) return;
-        
-        btnUpdateStreamings.disabled = true;
-        btnUpdateStreamings.innerHTML = '<span>Atualizando...</span>';
-        
+if (btnUpdateObras) {
+    btnUpdateObras.onclick = async () => {
+        const totalObras = movies.filter(m => m.type !== 'Livro' && m.id).length;
+        if (totalObras === 0) {
+            if (window.showToast) window.showToast('Nenhuma obra elegível para atualização.', 'warning');
+            return;
+        }
+        if (!confirm(`Deseja buscar atualizações para ${totalObras} obra(s)? Isso buscará poster, sinopse, gêneros, diretor e streamings do TMDB. Pode levar alguns segundos.`)) return;
+
+        btnUpdateObras.disabled = true;
+        btnUpdateObras.innerHTML = '<span>Buscando...</span>';
+
+        let atualizadas = 0;
+        let erros = 0;
+
         for (let m of movies) {
-            if (m.type !== 'Livro') {
-                m.providers = undefined; // Força re-busca
+            // Livros e obras sem ID TMDB são ignoradas
+            if (m.type === 'Livro' || !m.id) continue;
+
+            try {
+                const typePath = (m.type === 'Série' || m.type === 'tv') ? 'tv' : 'movie';
+
+                // Busca detalhes atualizados no TMDB
+                const detailsRes = await fetch(
+                    `https://api.themoviedb.org/3/${typePath}/${m.id}?api_key=${apiKey}&language=pt-BR&append_to_response=credits`
+                );
+                if (!detailsRes.ok) throw new Error(`HTTP ${detailsRes.status}`);
+                const details = await detailsRes.json();
+
+                // Atualiza poster
+                if (details.poster_path) {
+                    m.poster = `https://image.tmdb.org/t/p/w500${details.poster_path}`;
+                }
+
+                // Atualiza sinopse
+                if (details.overview) {
+                    m.overview = details.overview;
+                }
+
+                // Atualiza gêneros
+                if (details.genres && details.genres.length > 0) {
+                    m.genres = details.genres.map(g => g.name).join(', ');
+                }
+
+                // Atualiza ano
+                const releaseDate = details.release_date || details.first_air_date || '';
+                if (releaseDate) {
+                    m.year = releaseDate.substring(0, 4);
+                }
+
+                // Atualiza diretor / criador
+                if (typePath === 'movie' && details.credits && details.credits.crew) {
+                    const directors = details.credits.crew.filter(c => c.job === 'Director').map(c => c.name);
+                    if (directors.length > 0) m.director = directors.join(', ');
+                } else if (typePath === 'tv') {
+                    if (details.created_by && details.created_by.length > 0) {
+                        m.director = details.created_by.map(c => c.name).join(', ');
+                    }
+                }
+
+                // Atualiza título original
+                if (details.original_title || details.original_name) {
+                    m.originalTitle = details.original_title || details.original_name;
+                }
+
+                // Atualiza países de origem
+                if (details.origin_country && details.origin_country.length > 0) {
+                    m.country = details.origin_country.map(c =>
+                        (typeof COUNTRY_MAP !== 'undefined' && COUNTRY_MAP[c]) || c
+                    ).join(', ');
+                } else if (details.production_countries && details.production_countries.length > 0) {
+                    m.country = details.production_countries.map(c =>
+                        (typeof COUNTRY_MAP !== 'undefined' && COUNTRY_MAP[c.iso_3166_1]) || c.name
+                    ).join(', ');
+                }
+
+                // Atualiza streaming/providers (força re-busca)
+                m.providers = undefined;
                 await loadProviders(m);
+
+                m.updatedAt = Date.now();
+                atualizadas++;
+
+            } catch (e) {
+                console.error(`Erro ao atualizar obra "${m.title || m.id}":`, e);
+                erros++;
             }
         }
-        
+
         localStorage.setItem('myMovies', JSON.stringify(movies));
         renderMovies();
         if (typeof updateDrawerOptions === 'function') updateDrawerOptions();
-        
-        btnUpdateStreamings.innerHTML = `
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg>
-            <span>Atualizar Streamings</span>
+
+        btnUpdateObras.innerHTML = `
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2H3v16h5v4l4-4h5l4-4V2zm-10 9V7m0 4v.01"/><polyline points="16 2 16 8 22 8"/></svg>
+            <span>Buscar Atualizações</span>
         `;
-        btnUpdateStreamings.disabled = false;
+        btnUpdateObras.disabled = false;
         if (hamburgerMenu) hamburgerMenu.style.display = 'none';
-        if (window.showToast) window.showToast('Todos os streamings foram atualizados!', 'success');
+
+        const msg = erros > 0
+            ? `${atualizadas} obra(s) atualizada(s), ${erros} com erro.`
+            : `${atualizadas} obra(s) atualizada(s) com sucesso!`;
+        if (window.showToast) window.showToast(msg, erros > 0 ? 'warning' : 'success');
     };
 }
 
