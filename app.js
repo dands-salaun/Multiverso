@@ -1075,7 +1075,7 @@ async function fetchAndUpdateObra(movie) {
 
 // Exibir detalhes
 window.showDetails = async function(id) {
-    const movie = movies.find(m => m.id === id);
+    const movie = movies.find(m => String(m.id) === String(id));
     if (!movie) return;
 
     currentMovieIdForRating = id;

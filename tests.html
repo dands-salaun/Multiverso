@@ -158,7 +158,9 @@ function mergeMovieFields(local, remote, tombstoneDeletedAt) {
     const remoteTs = remote.updatedAt || remote.addedAt || 0;
     if (tombstoneDeletedAt && tombstoneDeletedAt > localTs && tombstoneDeletedAt > remoteTs) return null;
     const winner = localTs >= remoteTs ? local : remote;
-    const loser  = localTs >= remoteTs ? remote : local;
+    // AVISO: 'loser' é dead code — declarado mas nunca utilizado. Documentado como
+    // inconsistência em jsonbin-sync.js (linha 135). Mantido aqui para espelhar o código real.
+    const loser  = localTs >= remoteTs ? remote : local; // eslint-disable-line no-unused-vars
     return {
         ...winner,
         notes: mergeNotes(local.notes, remote.notes, localTs, remoteTs),
@@ -205,7 +207,7 @@ function mergeMovieLists(localList, remoteList) {
         if (localByTitleYear.has(key)) return;
         result.set(id, remoteMovie);
     });
-    return Array.from(result.values());
+    return Array.from(result.values()).filter(Boolean);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -582,6 +584,97 @@ function runAllTests() {
         const result = mergeMovieFields(local, remote);
         // remote.updatedAt > local.updatedAt → remote vence
         expect(result.status).toBe('quero-assistir');
+    });
+
+    // ──────────────────────────────────────────────
+    suite('Inconsistência #1 — null de mergeMovieFields não é filtrado');
+    // ──────────────────────────────────────────────
+    // BUG IDENTIFICADO: mergeMovieFields retorna null quando tombstone vence ambas as
+    // versões E a obra existe nos DOIS lados (local + remoto). Nesse caso, mergeMovieLists
+    // chama mergeMovieFields e guarda o null no Map via result.set(id, null).
+    // O array final pode conter null se o chamador não usar .filter(Boolean).
+    // Em jsonbin-sync.js, testAndSyncJsonBin já usa .filter(Boolean) corretamente,
+    // mas mergeMovieLists em si não filtra — o contrato não é claro.
+
+    test('mergeMovieFields retorna null quando tombstone > ambas versões', () => {
+        // tombstone mais recente que local e remoto: obra deve ser removida
+        const local  = makeMovie({ updatedAt: T.ancient });
+        const remote = makeMovie({ updatedAt: T.old });
+        const result = mergeMovieFields(local, remote, T.now); // tombstone = T.now (mais recente)
+        expect(result).toBeNull();
+    });
+
+    test('mergeMovieLists com tombstone > ambos lados NÃO produz null no array (fix aplicado)', () => {
+        // Cenário: obra existe local E remota, mas tombstone é mais recente que ambas.
+        // mergeMovieFields retorna null → result.set(id, null).
+        // FIX: .filter(Boolean) agora é aplicado DENTRO de mergeMovieLists (jsonbin-sync.js:118).
+        // Este teste serve como regressão: garante que o fix permanece em vigor.
+        localStorage.setItem('deletedMovies', JSON.stringify([
+            { id: '1', deletedAt: T.now }
+        ]));
+        const local  = [makeMovie({ id: '1', updatedAt: T.ancient })];
+        const remote = [makeMovie({ id: '1', updatedAt: T.old })];
+        const raw = mergeMovieLists(local, remote);
+        // Com o fix, o array não deve conter null
+        const hasNull = raw.some(item => item === null);
+        expect(hasNull).toBe(false);
+        expect(raw).toHaveLength(0);
+    });
+
+    // ──────────────────────────────────────────────
+    suite('Inconsistência #2 — coerção de ID em showDetails vs restante do código');
+    // ──────────────────────────────────────────────
+    // BUG IDENTIFICADO: app.js showDetails usa `movies.find(m => m.id === id)` (===, sem String()),
+    // enquanto toggleMovieStatus, toggleMovieFavorite e removeMovie todos usam
+    // `String(m.id) === String(id)`. IDs numéricos do TMDB (ex: 12345) podem falhar no
+    // showDetails se forem comparados sem coerção de tipo.
+
+    test('Busca por ID numérico falha com === mas funciona com String()', () => {
+        // Simula o comportamento de showDetails (sem coerção)
+        const movieList = [makeMovie({ id: 12345 })]; // id numérico (TMDB)
+        const idStr = '12345'; // id vindo de onclick string no HTML
+
+        // Comportamento ATUAL de showDetails (===): pode não encontrar
+        const foundStrict = movieList.find(m => m.id === idStr);
+        expect(foundStrict).toBeFalsy(); // bug: não encontra!
+
+        // Comportamento CORRETO (com coerção como em toggleMovieStatus):
+        const foundCoerced = movieList.find(m => String(m.id) === String(idStr));
+        expect(foundCoerced).toBeTruthy(); // correto
+    });
+
+    test('Busca por ID string funciona com === quando armazenado como string', () => {
+        // IDs salvos como string (Google Books, OpenLibrary) funcionam corretamente
+        const movieList = [makeMovie({ id: 'OL12345W' })];
+        const idStr = 'OL12345W';
+        const found = movieList.find(m => m.id === idStr);
+        expect(found).toBeTruthy();
+    });
+
+    // ──────────────────────────────────────────────
+    suite('Inconsistência #3 — areMovieListsEqual e listas com null/undefined');
+    // ──────────────────────────────────────────────
+    // areMovieListsEqual usa getFingerprint que chama m.id, m.status, etc. diretamente.
+    // Se a lista contiver um null (produzido pelo bug #1 acima), String(null.id) lança TypeError.
+
+    test('areMovieListsEqual não lança erro com lista válida de objetos', () => {
+        const a = [makeMovie({ id: '1' })];
+        const b = [makeMovie({ id: '1' })];
+        let error = null;
+        try { areMovieListsEqual(a, b); } catch(e) { error = e; }
+        expect(error).toBeNull();
+    });
+
+    test('areMovieListsEqual lança TypeError se lista contiver null (bug em cadeia com #1)', () => {
+        // Este teste documenta o crash em cadeia: se mergeMovieLists retornar [null]
+        // e esse resultado for passado para areMovieListsEqual sem .filter(Boolean), ocorre crash.
+        const listWithNull = [null];
+        const other = [makeMovie()];
+        let error = null;
+        try { areMovieListsEqual(listWithNull, other); } catch(e) { error = e; }
+        // Esperamos que haja um erro (TypeError: Cannot read properties of null)
+        expect(error).toBeTruthy();
+        console.warn('[WARN] areMovieListsEqual com null na lista lança:', error && error.message);
     });
 
     // Renderizar resultados

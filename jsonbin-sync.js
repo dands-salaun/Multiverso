@@ -115,7 +115,7 @@ function mergeMovieLists(localList, remoteList) {
         result.set(id, remoteMovie);
     });
 
-    return Array.from(result.values());
+    return Array.from(result.values()).filter(Boolean);
 }
 
 // Merge de campos individuais de uma obra presente nos dois lados
@@ -132,9 +132,8 @@ function mergeMovieFields(local, remote, tombstoneDeletedAt) {
 
     // Winner-takes-all: a versão mais recente prevalece como base
     const winner = localTs >= remoteTs ? local : remote;
-    const loser  = localTs >= remoteTs ? remote : local;
 
-    // Merge de campos individuais: se o loser tem dado e o winner não, preserva o do loser
+    // Espalha o winner como base e sobrescreve campos individuais com a lógica de merge específica
     return {
         ...winner,
         // Preservar notas: concatenar se ambos têm notas diferentes (evitar perda silenciosa)
