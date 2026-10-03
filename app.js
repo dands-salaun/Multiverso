@@ -246,6 +246,7 @@ let currentTypeFilter = 'all';
 let filterAssistidos = false;
 let filterNaoAssistidos = false;
 let filterFavoritos = false;
+let isBookMode = false; // controla o modo exclusivo de busca de livros
 
 let currentSort = 'recent';
 const sortSelect = document.getElementById('sort-select');
@@ -620,61 +621,95 @@ async function performAutoFetch() {
         
         // Buscar Livros
         if (typePath === 'book' || typePath === 'multi') {
-            let foundBooks = false;
 
-            // Fonte primária: Google Books (com API Key)
-            try {
-                const res = await fetch(`https://www.googleapis.com/books/v1/volumes?q=${encodeURIComponent(query)}&maxResults=15&key=${googleBooksApiKey}`);
-                if (res.ok) {
-                    const data = await res.json();
-                    if (data.items && data.items.length > 0) {
-                        foundBooks = true;
-                        const bookResults = data.items.map(item => {
-                            const info = item.volumeInfo;
-                            return {
-                                id: item.id, // Google Books usa IDs em string
-                                type: 'book',
-                                title: info.title,
-                                year: (info.publishedDate || '').substring(0, 4),
-                                poster: info.imageLinks && info.imageLinks.thumbnail
-                                    ? info.imageLinks.thumbnail.replace('http:', 'https:')
-                                    : POSTER_PLACEHOLDER,
-                                source: 'books',
-                                rawData: item
-                            };
-                        });
-                        results = results.concat(bookResults);
-                    }
-                }
-            } catch(e) {
-                console.log("Erro no Google Books API (possível limite de requisições sem API Key)", e);
+            // Solução A: detectar ISBN e usar operador específico; caso contrário usar intitle:
+            const isIsbn = /^(?:\d{9}[\dXx]|\d{13})$/.test(query.replace(/[-\s]/g, ''));
+            const gbQuery = isIsbn
+                ? `isbn:${query.replace(/[-\s]/g, '')}`
+                : `intitle:${encodeURIComponent(query)}`;
+
+            // Solução A (OpenLibrary): usar campo title= para busca mais precisa
+            const olQueryParam = isIsbn
+                ? `isbn=${query.replace(/[-\s]/g, '')}`
+                : `title=${encodeURIComponent(query)}`;
+
+            // Solução B: buscar Google Books e OpenLibrary em paralelo, sempre
+            const [gbResult, olResult] = await Promise.allSettled([
+                fetch(`https://www.googleapis.com/books/v1/volumes?q=${gbQuery}&maxResults=20&key=${googleBooksApiKey}`)
+                    .then(r => r.ok ? r.json() : Promise.reject(r.status)),
+                fetch(`https://openlibrary.org/search.json?${olQueryParam}&limit=15&fields=key,title,author_name,first_publish_year,cover_i,isbn`)
+                    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+            ]);
+
+            let bookResults = [];
+
+            // Processar resultados do Google Books
+            if (gbResult.status === 'fulfilled' && gbResult.value.items?.length > 0) {
+                const mapped = gbResult.value.items.map(item => {
+                    const info = item.volumeInfo;
+                    return {
+                        id: item.id,
+                        type: 'book',
+                        title: info.title || '',
+                        author: (info.authors || []).join(', '),
+                        year: (info.publishedDate || '').substring(0, 4),
+                        poster: info.imageLinks?.thumbnail
+                            ? info.imageLinks.thumbnail.replace('http:', 'https:')
+                            : POSTER_PLACEHOLDER,
+                        hasCover: !!(info.imageLinks?.thumbnail),
+                        source: 'books',
+                        rawData: item
+                    };
+                });
+                bookResults = bookResults.concat(mapped);
+            } else if (gbResult.status === 'rejected') {
+                console.log('Google Books falhou:', gbResult.reason);
             }
 
-            // Fallback: Open Library — usada quando o Google Books falha ou não retorna resultados
-            // Referência: https://openlibrary.org/developers/api
-            if (!foundBooks) {
-                try {
-                    const olRes = await fetch(`https://openlibrary.org/search.json?q=${encodeURIComponent(query)}&limit=10`);
-                    if (olRes.ok) {
-                        const olData = await olRes.json();
-                        if (olData.docs && olData.docs.length > 0) {
-                            const bookResults = olData.docs.map(item => ({
-                                id: item.key.replace('/works/', ''),
-                                type: 'book',
-                                title: item.title,
-                                year: item.first_publish_year ? item.first_publish_year.toString() : '',
-                                poster: item.cover_i ? `https://covers.openlibrary.org/b/id/${item.cover_i}-M.jpg` : POSTER_PLACEHOLDER,
-                                source: 'openlibrary',
-                                rawData: item
-                            }));
-                            results = results.concat(bookResults);
-                        }
-                    }
-                } catch(e) {
-                    console.log("Erro no OpenLibrary", e);
-                }
+            // Processar resultados do OpenLibrary — deduplicar por título+autor
+            if (olResult.status === 'fulfilled' && olResult.value.docs?.length > 0) {
+                const gbTitles = new Set(bookResults.map(b => b.title.toLowerCase().trim()));
+                const mapped = olResult.value.docs
+                    .filter(item => item.title && !gbTitles.has(item.title.toLowerCase().trim()))
+                    .map(item => ({
+                        id: item.key.replace('/works/', ''),
+                        type: 'book',
+                        title: item.title || '',
+                        author: (item.author_name || []).join(', '),
+                        year: item.first_publish_year ? String(item.first_publish_year) : '',
+                        poster: item.cover_i
+                            ? `https://covers.openlibrary.org/b/id/${item.cover_i}-M.jpg`
+                            : POSTER_PLACEHOLDER,
+                        hasCover: !!item.cover_i,
+                        source: 'openlibrary',
+                        rawData: item
+                    }));
+                bookResults = bookResults.concat(mapped);
+            } else if (olResult.status === 'rejected') {
+                console.log('OpenLibrary falhou:', olResult.reason);
             }
+
+            // Solução C: ranquear por relevância antes de exibir
+            if (bookResults.length > 0) {
+                const q = query.toLowerCase().trim();
+                bookResults.sort((a, b) => {
+                    const scoreItem = (item) => {
+                        const t = item.title.toLowerCase();
+                        let score = 0;
+                        if (t === q)                    score += 100; // correspondência exata
+                        else if (t.startsWith(q))       score += 50;  // começa com a query
+                        else if (t.includes(q))         score += 20;  // contém a query
+                        if (item.hasCover)              score += 10;  // tem capa
+                        if (item.source === 'books')    score += 5;   // Google Books tende a ter dados melhores
+                        return score;
+                    };
+                    return scoreItem(b) - scoreItem(a);
+                });
+            }
+
+            results = results.concat(bookResults);
         }
+
         
         if (results.length > 0) {
             autoSuggestions.innerHTML = '';
@@ -688,11 +723,17 @@ async function performAutoFetch() {
                 div.onmouseover = () => div.style.background = 'var(--bg-elevated-hover)';
                 div.onmouseout = () => div.style.background = 'transparent';
                 
+                const safeTitle  = sanitizeHtml(item.title || '');
+                const safeAuthor = item.author ? sanitizeHtml(item.author) : '';
+                const subline = safeAuthor
+                    ? `${safeAuthor}${item.year ? ' · ' + item.year : ''}`
+                    : (item.year || '');
+
                 div.innerHTML = `
                     <img src="${item.poster}" style="width:30px; height:45px; object-fit:cover; border-radius:3px;">
                     <div>
-                        <div style="font-size:14px; font-weight:bold; color:var(--text-color);">${badge} ${item.title}</div>
-                        <div style="font-size:12px; color:var(--text-faint);">${item.year}</div>
+                        <div style="font-size:14px; font-weight:bold; color:var(--text-color);">${badge} ${safeTitle}</div>
+                        <div style="font-size:12px; color:var(--text-faint);">${subline}</div>
                     </div>
                 `;
                 
@@ -846,9 +887,19 @@ let autoFetchTimeout;
 if (formAutoTitle) {
     formAutoTitle.addEventListener('input', (e) => {
         clearTimeout(autoFetchTimeout);
-        
+
         const val = e.target.value;
-        
+
+        // No modo livro, renderiza o grid em vez do dropdown
+        if (isBookMode) {
+            if (!val.trim()) {
+                if (bookResultsGrid) bookResultsGrid.style.display = 'none';
+                return;
+            }
+            autoFetchTimeout = setTimeout(() => renderBookGrid(val.trim()), val.endsWith(' ') ? 500 : 1200);
+            return;
+        }
+
         // Se digitou um espaço (terminou uma palavra), busca mais rápido
         if (val.endsWith(' ')) {
             autoFetchTimeout = setTimeout(() => {
@@ -867,6 +918,7 @@ if (formAutoTitle) {
         if (e.key === 'Enter') {
             e.preventDefault();
             clearTimeout(autoFetchTimeout);
+            if (isBookMode) { renderBookGrid(formAutoTitle.value.trim()); return; }
             performAutoFetch();
         }
     });
@@ -881,7 +933,166 @@ if (formAutoType) {
     });
 }
 
-// Preview da imagem da capa ao digitar URL
+// ============================================================
+// MODO LIVRO — toggle pill + grid de resultados
+// ============================================================
+const btnBookMode = document.getElementById('btn-book-mode');
+const bookResultsGrid = document.getElementById('book-results-grid');
+
+function setBookMode(active) {
+    isBookMode = active;
+    if (btnBookMode) btnBookMode.classList.toggle('active', active);
+
+    const fetchFields = document.querySelector('.auto-fetch-fields');
+    if (fetchFields) fetchFields.classList.toggle('book-mode-active', active);
+
+    if (active) {
+        // Sincroniza o select (usado internamente no save) para 'book'
+        if (formAutoType) formAutoType.value = 'book';
+        // Troca o placeholder para indicar os modos de busca disponíveis
+        if (formAutoTitle) formAutoTitle.placeholder = 'Título, autor ou ISBN...';
+        // Oculta o dropdown padrão de sugestões
+        if (autoSuggestions) autoSuggestions.style.display = 'none';
+        // Se já havia texto digitado, dispara a busca no grid imediatamente
+        if (formAutoTitle && formAutoTitle.value.trim()) {
+            renderBookGrid(formAutoTitle.value.trim());
+        }
+    } else {
+        // Volta ao estado padrão
+        if (formAutoType) formAutoType.value = 'multi';
+        if (formAutoTitle) formAutoTitle.placeholder = 'Ex: Oppenheimer, 1984, Ruptura...';
+        if (bookResultsGrid) bookResultsGrid.style.display = 'none';
+    }
+}
+
+if (btnBookMode) {
+    btnBookMode.addEventListener('click', () => {
+        setBookMode(!isBookMode);
+    });
+}
+
+async function renderBookGrid(query) {
+    if (!bookResultsGrid) return;
+
+    // Estado de loading
+    bookResultsGrid.style.display = 'grid';
+    bookResultsGrid.innerHTML = '<div class="book-results-loading">🔍 Buscando livros...</div>';
+
+    try {
+        const isIsbn = /^(?:\d{9}[\dXx]|\d{13})$/.test(query.replace(/[-\s]/g, ''));
+        const gbQuery = isIsbn
+            ? `isbn:${query.replace(/[-\s]/g, '')}`
+            : `intitle:${encodeURIComponent(query)}`;
+        const olQueryParam = isIsbn
+            ? `isbn=${query.replace(/[-\s]/g, '')}`
+            : `title=${encodeURIComponent(query)}`;
+
+        const [gbResult, olResult] = await Promise.allSettled([
+            fetch(`https://www.googleapis.com/books/v1/volumes?q=${gbQuery}&maxResults=20&key=${googleBooksApiKey}`)
+                .then(r => r.ok ? r.json() : Promise.reject(r.status)),
+            fetch(`https://openlibrary.org/search.json?${olQueryParam}&limit=15&fields=key,title,author_name,first_publish_year,cover_i,isbn`)
+                .then(r => r.ok ? r.json() : Promise.reject(r.status))
+        ]);
+
+        let bookResults = [];
+
+        // Google Books
+        if (gbResult.status === 'fulfilled' && gbResult.value.items?.length > 0) {
+            bookResults = gbResult.value.items.map(item => {
+                const info = item.volumeInfo;
+                return {
+                    id: item.id,
+                    title: info.title || '',
+                    author: (info.authors || []).join(', '),
+                    year: (info.publishedDate || '').substring(0, 4),
+                    poster: info.imageLinks?.thumbnail
+                        ? info.imageLinks.thumbnail.replace('http:', 'https:')
+                        : POSTER_PLACEHOLDER,
+                    hasCover: !!(info.imageLinks?.thumbnail),
+                    source: 'books',
+                    rawData: item
+                };
+            });
+        }
+
+        // OpenLibrary (deduplica por título)
+        if (olResult.status === 'fulfilled' && olResult.value.docs?.length > 0) {
+            const gbTitles = new Set(bookResults.map(b => b.title.toLowerCase().trim()));
+            const olMapped = olResult.value.docs
+                .filter(item => item.title && !gbTitles.has(item.title.toLowerCase().trim()))
+                .map(item => ({
+                    id: item.key.replace('/works/', ''),
+                    title: item.title || '',
+                    author: (item.author_name || []).join(', '),
+                    year: item.first_publish_year ? String(item.first_publish_year) : '',
+                    poster: item.cover_i
+                        ? `https://covers.openlibrary.org/b/id/${item.cover_i}-M.jpg`
+                        : POSTER_PLACEHOLDER,
+                    hasCover: !!item.cover_i,
+                    source: 'openlibrary',
+                    rawData: item
+                }));
+            bookResults = bookResults.concat(olMapped);
+        }
+
+        // Ranquear por relevância (mesma lógica do dropdown padrão)
+        const q = query.toLowerCase().trim();
+        bookResults.sort((a, b) => {
+            const score = item => {
+                const t = item.title.toLowerCase();
+                let s = 0;
+                if (t === q)           s += 100;
+                else if (t.startsWith(q)) s += 50;
+                else if (t.includes(q))   s += 20;
+                if (item.hasCover)     s += 10;
+                if (item.source === 'books') s += 5;
+                return s;
+            };
+            return score(b) - score(a);
+        });
+
+        if (bookResults.length === 0) {
+            bookResultsGrid.innerHTML = '<div class="book-results-loading">Nenhum livro encontrado.</div>';
+            return;
+        }
+
+        // Renderiza máx. 8 cards
+        const slice = bookResults.slice(0, 8);
+        bookResultsGrid.innerHTML = slice.map((item, i) => `
+            <div class="book-result-card" data-index="${i}" role="button" tabindex="0" title="${sanitizeHtml(item.title)}">
+                <img src="${sanitizeHtml(item.poster)}" alt="${sanitizeHtml(item.title)}"
+                     onerror="this.src='${POSTER_PLACEHOLDER}'">
+                <div class="book-card-info">
+                    <div class="book-card-title">${sanitizeHtml(item.title)}</div>
+                    ${item.author ? `<div class="book-card-author">${sanitizeHtml(item.author)}</div>` : ''}
+                    ${item.year ? `<div class="book-card-year">${sanitizeHtml(item.year)}</div>` : ''}
+                </div>
+            </div>
+        `).join('');
+
+        // Eventos nos cards (clique + teclado)
+        slice.forEach((item, i) => {
+            const card = bookResultsGrid.querySelector(`[data-index="${i}"]`);
+            if (!card) return;
+            card.addEventListener('click', () => {
+                bookResultsGrid.style.display = 'none';
+                selectSuggestion(item.id, 'book', item.rawData, item.source);
+            });
+            card.addEventListener('keydown', e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    card.click();
+                }
+            });
+        });
+
+    } catch (err) {
+        console.error('Erro ao buscar livros para o grid:', err);
+        if (bookResultsGrid) bookResultsGrid.innerHTML = '<div class="book-results-loading">Erro ao buscar. Tente novamente.</div>';
+    }
+}
+
+
 if (formPosterUrl) {
     formPosterUrl.addEventListener('input', () => {
         if (formPosterUrl.value.trim() !== '') {
@@ -1185,6 +1396,8 @@ window.showDetails = async function(id) {
             currentFetchedId = movie.id;
             if (formAutoTitle) formAutoTitle.value = movie.title || '';
             if (formAutoType) formAutoType.value = movie.type === 'Série' ? 'tv' : (movie.type === 'Livro' ? 'book' : 'movie');
+            // Ativa ou desativa o modo livro conforme o tipo da obra sendo editada
+            setBookMode(movie.type === 'Livro');
             
             if (movie.poster && !movie.poster.includes('via.placeholder.com')) {
                 if (formPosterUrl) formPosterUrl.value = movie.poster;
@@ -1303,9 +1516,11 @@ if (btnOpenSearch) btnOpenSearch.onclick = () => {
     const formTitle = document.getElementById('form-modal-title');
     if (formTitle) formTitle.innerText = '\u2795 Adicionar Obra ao catálogo';
     
+    setBookMode(false); // garante que sempre abre no modo padrão
     if (formAutoTitle) formAutoTitle.value = '';
     if (formAutoType) formAutoType.value = 'multi';
     if (autoSuggestions) { autoSuggestions.style.display = 'none'; autoSuggestions.innerHTML = ''; }
+    if (bookResultsGrid) { bookResultsGrid.style.display = 'none'; bookResultsGrid.innerHTML = ''; }
     if (formPosterUrl) formPosterUrl.value = '';
     if (formPosterPreview) { formPosterPreview.src = ''; formPosterPreview.style.display = 'none'; }
     if (formPosterPlaceholder) formPosterPlaceholder.style.display = 'block';
