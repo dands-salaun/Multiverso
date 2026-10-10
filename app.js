@@ -1056,8 +1056,8 @@ async function renderBookGrid(query) {
             return;
         }
 
-        // Renderiza máx. 8 cards
-        const slice = bookResults.slice(0, 8);
+        // Renderiza máx. 12 cards
+        const slice = bookResults.slice(0, 12);
         bookResultsGrid.innerHTML = slice.map((item, i) => `
             <div class="book-result-card" data-index="${i}" role="button" tabindex="0" title="${sanitizeHtml(item.title)}">
                 <img src="${sanitizeHtml(item.poster)}" alt="${sanitizeHtml(item.title)}"
