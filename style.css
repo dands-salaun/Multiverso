@@ -948,9 +948,10 @@ main {
     font-weight: 700;
 }
 
-/* Ocultar o wrapper do select quando o modo livro está ativo */
-.auto-fetch-fields.book-mode-active #auto-type-wrapper {
-    display: none;
+/* Ocultar o wrapper do select e o dropdown de sugestões quando o modo livro está ativo */
+.auto-fetch-fields.book-mode-active #auto-type-wrapper,
+.auto-fetch-fields.book-mode-active #auto-suggestions {
+    display: none !important;
 }
 
 /* ------------------------------------------

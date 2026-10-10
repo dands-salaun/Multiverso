@@ -590,6 +590,10 @@ window.removeMovie = function(id) {
 
 // Função de busca e preenchimento de sugestões
 async function performAutoFetch() {
+    if (isBookMode) {
+        if (autoSuggestions) autoSuggestions.style.display = 'none';
+        return;
+    }
     const query = formAutoTitle.value.trim();
     if (!query) {
         autoSuggestions.style.display = 'none';
@@ -892,6 +896,10 @@ if (formAutoTitle) {
 
         // No modo livro, renderiza o grid em vez do dropdown
         if (isBookMode) {
+            if (autoSuggestions) {
+                autoSuggestions.style.display = 'none';
+                autoSuggestions.innerHTML = '';
+            }
             if (!val.trim()) {
                 if (bookResultsGrid) bookResultsGrid.style.display = 'none';
                 return;
@@ -973,6 +981,11 @@ if (btnBookMode) {
 
 async function renderBookGrid(query) {
     if (!bookResultsGrid) return;
+
+    if (autoSuggestions) {
+        autoSuggestions.style.display = 'none';
+        autoSuggestions.innerHTML = '';
+    }
 
     // Estado de loading
     bookResultsGrid.style.display = 'grid';
